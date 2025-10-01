@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.example.workouttracker.app-mergeDebugResources-72:/values-v18/values-v18.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\vinay\\.gradle\\caches\\transforms-4\\7023bb56fb9c16c243b76788fe8f8297\\transformed\\appcompat-1.6.1\\res\\values-v18\\values-v18.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "48",
+                        "endOffsets": "99"
+                    }
+                }
+            ]
+        }
+    ]
+}

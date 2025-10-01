@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Track Mate</string>
+    <string name="camera_permission_required">Camera permission is required for pose detection</string>
+    <string name="pushups">Pushups</string>
+    <string name="reps">Reps</string>
+    <string name="xp">XP</string>
+    <string name="start_session">Start Session</string>
+    <string name="save_session">Save Session</string>
+    <string name="session_active">Session Active</string>
+    <string name="history">History</string>
+    <string name="reset">Reset</string>
+    <string name="close">Close</string>
+    <string name="no_sessions">No workout sessions yet.\nStart your first workout!</string>
+    <string name="total_sessions">Total Sessions</string>
+    <string name="total_reps">Total Reps</string>
+    <string name="total_xp">Total XP</string>
+    <string name="duration">Duration</string>
+    <string name="workout_history">Workout History</string>
+    <string name="session_saved">Session saved successfully!</string>
+    <!-- Onboarding -->
+    <string name="welcome_title">Welcome to Track Mate</string>
+    <string name="welcome_sub">Let’s personalize your fitness journey</string>
+    <string name="enter_name_hint">Your name</string>
+    <string name="continue_label">Continue</string>
+</resources>
