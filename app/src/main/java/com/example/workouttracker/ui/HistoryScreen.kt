@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,15 +24,23 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 
+// Helper
+// private fun String.capitalize() = replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
     repo: SessionRepository,
     onClose: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var sessions by remember { mutableStateOf<List<SessionEntity>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var totalStats by remember { mutableStateOf(Triple(0, 0, 0)) } // sessions, reps, xp
+    
+    // Chart Data
+    var lineChartData by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
+    var heatMapData by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
 
     LaunchedEffect(Unit) {
         try {
@@ -47,12 +57,32 @@ fun HistoryScreen(
             val totalXp = sorted.sumOf { it.totalXp }
             totalStats = Triple(totalSessions, totalReps, totalXp)
             
+            // Process Chart Data
+            val dateFormatter = DateTimeFormatter.ofPattern("MM-dd")
+            val heatMapFormatter = DateTimeFormatter.ISO_LOCAL_DATE
+            
+            // Line Chart: Daily Reps (Last 14 days)
+            val dailyReps = sorted.groupBy { 
+                formatTimestampToDate(it.timestampIso) 
+            }.mapValues { it.value.sumOf { s -> s.reps } }
+            
+            lineChartData = dailyReps.entries.sortedBy { it.key }
+                .takeLast(14)
+                .map { Pair(it.key.format(dateFormatter), it.value) }
+                
+            // Heat Map: Daily Activity Count (Last 90 days)
+            heatMapData = sorted.groupBy {
+                 formatTimestampToDate(it.timestampIso).format(heatMapFormatter)
+            }.mapValues { it.value.size } // Count sessions per day
+            
         } catch (e: Exception) {
             // Handle error silently
         } finally {
             isLoading = false
         }
     }
+    
+    // Export moved to SettingsScreen
 
     Card(
         modifier = Modifier
@@ -77,8 +107,10 @@ fun HistoryScreen(
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
                 )
-                Button(onClick = onClose) {
-                    Text("Close")
+                Row {
+                    Button(onClick = onClose) {
+                        Text("Close")
+                    }
                 }
             }
 
@@ -104,6 +136,15 @@ fun HistoryScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // Visualizations
+                Text("Activity Heatmap", style = MaterialTheme.typography.titleMedium)
+                ContributionHeatMap(heatMapData, Modifier.height(100.dp).padding(vertical = 8.dp))
+                
+                Text("Reps Trend", style = MaterialTheme.typography.titleMedium)
+                LineChart(lineChartData, Modifier.fillMaxWidth().height(200.dp))
+                
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
@@ -175,7 +216,7 @@ private fun SessionCard(session: SessionEntity) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = session.exercise.replaceFirstChar { it.uppercase() },
+                    text = com.example.workouttracker.Utils.capitalize(session.exercise.replace("_", " ")),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -200,9 +241,18 @@ private fun SessionCard(session: SessionEntity) {
     }
 }
 
+private fun formatTimestampToDate(timestampIso: String): java.time.LocalDate {
+    return try {
+        val instant = try { OffsetDateTime.parse(timestampIso).toInstant() } catch (_: Exception) { Instant.parse(timestampIso) }
+        instant.atZone(ZoneId.systemDefault()).toLocalDate()
+    } catch (e: Exception) {
+        java.time.LocalDate.now()
+    }
+}
+
 private fun formatTimestamp(timestampIso: String): String {
     return try {
-        val instant = Instant.parse(timestampIso)
+        val instant = try { OffsetDateTime.parse(timestampIso).toInstant() } catch (_: Exception) { Instant.parse(timestampIso) }
         val localDateTime = instant.atZone(ZoneId.systemDefault()).toLocalDateTime()
         val formatter = DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm")
         localDateTime.format(formatter)

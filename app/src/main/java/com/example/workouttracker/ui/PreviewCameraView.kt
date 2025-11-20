@@ -28,7 +28,8 @@ import java.util.concurrent.Executors
 fun PreviewCameraView(
     engine: WorkoutEngine,
     modifier: Modifier = Modifier,
-    performanceSettings: PerformanceSettings = PerformanceSettings()
+    performanceSettings: PerformanceSettings = PerformanceSettings(),
+    showLandmarks: Boolean = false
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -109,11 +110,13 @@ fun PreviewCameraView(
             },
             modifier = Modifier.fillMaxSize()
         )
-        PoseOverlay(
-            landmarks = landmarksState,
-            feedback = feedbackState,
-            modifier = Modifier.fillMaxSize()
-        )
+        if (showLandmarks) {
+            PoseOverlay(
+                landmarks = landmarksState,
+                feedback = feedbackState,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     }
 }
 
@@ -140,5 +143,6 @@ data class PerformanceSettings(
     val frameSkipModulo: Int = 2,
     val maxFps: Int = 30,
     val targetWidth: Int = 640,
-    val targetHeight: Int = 480
+    val targetHeight: Int = 480,
+    val showLandmarks: Boolean = false
 )

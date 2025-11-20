@@ -126,6 +126,10 @@ fun DashboardScreen(
 }
 
 @Composable private fun SessionListItem(s: SessionEntity) {
-    ListItem(headlineContent = { Text("${s.exercise}  ${s.reps} reps  XP ${s.totalXp}") }, supportingContent = { Text(s.timestampIso.replace("T"," ").take(19)) })
+    val name = com.example.workouttracker.Utils.capitalize(s.exercise.replace("_", " "))
+    ListItem(
+        headlineContent = { Text(name, fontWeight = FontWeight.Bold) },
+        supportingContent = { Text("${s.reps} reps • ${s.totalXp} XP • ${s.timestampIso.take(10)}") }
+    )
     Divider()
 }

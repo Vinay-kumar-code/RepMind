@@ -4,18 +4,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.FitnessCenter
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -41,6 +39,7 @@ private data class BottomDest(val route: String, val label: String, val icon: Im
 fun WorkoutApp(repo: SessionRepository) {
     val nav = rememberNavController()
     val appScope = remember { CoroutineScope(Dispatchers.Main) }
+    val context = LocalContext.current
 
     val progressManager = remember { ProgressManager(repo, appScope) }
     val dailyState by progressManager.dailyState.collectAsState()
@@ -50,6 +49,9 @@ fun WorkoutApp(repo: SessionRepository) {
     var showLevelUp by remember { mutableStateOf(false) }
     var profileName by remember { mutableStateOf("") }
     var startDestination by remember { mutableStateOf<String?>(null) }
+
+    // Settings State
+    var showLandmarks by remember { mutableStateOf(false) } // Default: Don't show
 
     // Rep tracking variables lifted outside listener so both listener and reset callback can access
     val engine = remember {
@@ -80,6 +82,7 @@ fun WorkoutApp(repo: SessionRepository) {
                         val diff = repIndex - lastBicepRight
                         if (diff > 0) { progressManager.recordBicepRight(diff, levelInfo, profileXp); lastBicepRight = repIndex }
                     }
+                    else -> {} // Other exercises don't track specific daily rep counts yet
                 }
                 appScope.launch {
                     val sessionXp = ref.getTotalXp()
@@ -120,8 +123,8 @@ fun WorkoutApp(repo: SessionRepository) {
     val bottomDestinations = listOf(
         BottomDest("dashboard", "Dashboard", Icons.Default.Home),
         BottomDest("workouts", "Workouts", Icons.Default.FitnessCenter),
-        BottomDest("progress", "Progress", Icons.Default.BarChart),
-        BottomDest("profile", "Profile", Icons.Default.Person)
+        BottomDest("profile", "Profile", Icons.Default.Person),
+        BottomDest("settings", "Settings", Icons.Default.Settings)
     )
 
     val hideBottomBarRoutes = setOf("session", "onboarding")
@@ -164,14 +167,45 @@ fun WorkoutApp(repo: SessionRepository) {
                 )
             }
             composable("workouts") { WorkoutsScreen(onStart = { type -> engine.setExerciseType(type); nav.navigate("session") }) }
-            composable("progress") { ProgressScreen(repo = repo) }
-            composable("profile") { ProfileScreen(name = profileName, levelInfo = levelInfo, xp = profileXp, dailyState = dailyState, repo = repo, onNameChange = { new -> profileName = new; appScope.launch(Dispatchers.IO) { repo.updateName(new) } }) }
+            composable("profile") { 
+                ProfileScreen(
+                    name = profileName, 
+                    levelInfo = levelInfo, 
+                    xp = profileXp, 
+                    dailyState = dailyState, 
+                    repo = repo, 
+                    onNameChange = { new -> profileName = new; appScope.launch(Dispatchers.IO) { repo.updateName(new) } }
+                ) 
+            }
+            composable("settings") {
+                SettingsScreen(
+                    showLandmarks = showLandmarks,
+                    onToggleLandmarks = { showLandmarks = it },
+                    onExport = {
+                        appScope.launch {
+                            val sessions = withContext(Dispatchers.IO) { repo.getAllSessions() }
+                            val csvHeader = "ID,Timestamp,Exercise,Reps,Duration(s),XP\n"
+                            val csvBody = sessions.joinToString("\n") { 
+                                "${it.id},${it.timestampIso},${it.exercise},${it.reps},${it.durationSeconds},${it.totalXp}" 
+                            }
+                            val csvContent = csvHeader + csvBody
+                            
+                            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "text/csv"
+                                putExtra(android.content.Intent.EXTRA_SUBJECT, "RepMind Workout Data")
+                                putExtra(android.content.Intent.EXTRA_TEXT, csvContent)
+                            }
+                            context.startActivity(android.content.Intent.createChooser(intent, "Export Workouts"))
+                        }
+                    }
+                )
+            }
             composable("session") {
                 WorkoutSessionScreen(
                     repo = repo,
                     onBack = { nav.popBackStack() },
                     engine = engine,
-                    performanceSettings = PerformanceSettings(),
+                    performanceSettings = PerformanceSettings(showLandmarks = showLandmarks),
                     levelInfo = levelInfo,
                     dailyState = dailyState,
                     onExerciseChange = { engine.setExerciseType(it) }
@@ -199,22 +233,64 @@ private fun OnboardingScreen(onContinue: (String) -> Unit) {
 
 @Composable
 private fun WorkoutsScreen(onStart: (ExerciseType) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Choose Workout", style = MaterialTheme.typography.titleLarge)
-        ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onStart(ExerciseType.PUSHUP) }) { Column(Modifier.padding(24.dp)) { Text("Pushups", style = MaterialTheme.typography.titleMedium); Text("Upper body strength") } }
-        ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onStart(ExerciseType.SQUAT) }) { Column(Modifier.padding(24.dp)) { Text("Squats", style = MaterialTheme.typography.titleMedium); Text("Lower body power") } }
-        ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onStart(ExerciseType.BICEP_LEFT) }) { Column(Modifier.padding(24.dp)) { Text("Bicep Curl - Left", style = MaterialTheme.typography.titleMedium); Text("Isolate left arm") } }
-        ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onStart(ExerciseType.BICEP_RIGHT) }) { Column(Modifier.padding(24.dp)) { Text("Bicep Curl - Right", style = MaterialTheme.typography.titleMedium); Text("Isolate right arm") } }
+        
+        Text("Essentials", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        WorkoutCard("Pushups", "Upper body strength", ExerciseType.PUSHUP, onStart)
+        WorkoutCard("Squats", "Lower body power", ExerciseType.SQUAT, onStart)
+        WorkoutCard("Lunges", "Leg strength & balance", ExerciseType.LUNGES, onStart)
+        
+        Text("Arms & Core", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        WorkoutCard("Bicep Curl - Left", "Isolate left arm", ExerciseType.BICEP_LEFT, onStart)
+        WorkoutCard("Bicep Curl - Right", "Isolate right arm", ExerciseType.BICEP_RIGHT, onStart)
+        WorkoutCard("Shoulder Press", "Overhead strength", ExerciseType.SHOULDER_PRESS, onStart)
+        
+        Text("Cardio", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        WorkoutCard("Jumping Jacks", "Full body cardio", ExerciseType.JUMPING_JACKS, onStart)
     }
 }
 
 @Composable
-private fun ProgressScreen(repo: SessionRepository) {
-    var sessions by remember { mutableStateOf(listOf<com.example.workouttracker.db.SessionEntity>()) }
-    LaunchedEffect(Unit) { sessions = withContext(Dispatchers.IO) { repo.getAllSessions() }.sortedByDescending { it.timestampIso }.take(50) }
-    LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { Text("Recent Sessions", style = MaterialTheme.typography.titleLarge) }
-        items(sessions) { s -> ListItem(headlineContent = { Text("${s.exercise}  ${s.reps} reps") }, supportingContent = { Text(s.timestampIso.replace("T"," ").take(19)) }) }
+private fun WorkoutCard(title: String, desc: String, type: ExerciseType, onStart: (ExerciseType) -> Unit) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onStart(type) }) {
+        Column(Modifier.padding(24.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(desc, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(showLandmarks: Boolean, onToggleLandmarks: (Boolean) -> Unit, onExport: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Pose Detection", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Show Landmarks", style = MaterialTheme.typography.bodyLarge)
+                        Text("Overlay skeleton on camera feed. Disable for cleaner view.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = showLandmarks, onCheckedChange = onToggleLandmarks)
+                }
+            }
+        }
+        
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Data Management", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = onExport, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Share, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Export Workout Data (CSV)")
+                }
+            }
+        }
     }
 }
 
@@ -229,137 +305,81 @@ private fun ProfileScreen(
 ) {
     var editing by remember { mutableStateOf(false) }
     var temp by remember { mutableStateOf(name) }
-    var monthDays by remember { mutableStateOf(emptyList<LocalDate>()) }
-    var monthFirstWeekOffset by remember { mutableStateOf(0) }
-    var goalDates by remember { mutableStateOf(setOf<LocalDate>()) }
-    var longestStreak by remember { mutableStateOf(0) }
-    var currentStreak by remember { mutableStateOf(dailyState?.streak ?: 0) }
-
-    val today = remember { LocalDate.now(ZoneId.of("Asia/Kolkata")) }
-    var displayYearMonth by remember { mutableStateOf(YearMonth.of(today.year, today.month)) }
-
-    LaunchedEffect(displayYearMonth) {
-        val first = displayYearMonth.atDay(1)
-        val length = displayYearMonth.lengthOfMonth()
-        monthDays = (0 until length).map { first.plusDays(it.toLong()) }
-        monthFirstWeekOffset = (first.dayOfWeek.value % 7)
-        val recents = withContext(Dispatchers.IO) { repo.getRecentDaily(370) }
-        val met = recents.filter { it.goalsMet }.map { LocalDate.parse(it.date) }.toSet()
-        goalDates = met
-        // Current streak always computed relative to today (not the viewed month)
-        var cur = 0; var d = today
-        while (d in met) { cur++; d = d.minusDays(1) }
-        currentStreak = cur
-        val metSorted = met.sorted()
-        var best = 0; var run = 0; var prev: LocalDate? = null
-        for (day in metSorted) {
-            if (prev == null || day == prev.plusDays(1)) run++ else run = 1
-            if (run > best) best = run
-            prev = day
-        }
-        longestStreak = best
+    
+    // History Data Integration
+    var sessions by remember { mutableStateOf<List<com.example.workouttracker.db.SessionEntity>>(emptyList()) }
+    var lineChartData by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
+    var heatMapData by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    
+    LaunchedEffect(Unit) {
+        val all = withContext(Dispatchers.IO) { repo.getAllSessions() }.sortedByDescending { it.timestampIso }
+        sessions = all
+        
+        // Process charts
+        try {
+            val dateFormatter = java.time.format.DateTimeFormatter.ofPattern("MM-dd")
+            val heatMapFormatter = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
+            
+            val dailyReps = all.groupBy { 
+                try {
+                    val instant = try { OffsetDateTime.parse(it.timestampIso).toInstant() } catch (_: Exception) { Instant.parse(it.timestampIso) }
+                    instant.atZone(ZoneId.systemDefault()).toLocalDate()
+                } catch (e: Exception) { LocalDate.now() }
+            }.mapValues { it.value.sumOf { s -> s.reps } }
+            
+            lineChartData = dailyReps.entries.sortedBy { it.key }
+                .takeLast(14)
+                .map { Pair(it.key.format(dateFormatter), it.value) }
+                
+            heatMapData = all.groupBy {
+                 try {
+                    val instant = try { OffsetDateTime.parse(it.timestampIso).toInstant() } catch (_: Exception) { Instant.parse(it.timestampIso) }
+                    instant.atZone(ZoneId.systemDefault()).toLocalDate().format(heatMapFormatter)
+                } catch (e: Exception) { LocalDate.now().toString() }
+            }.mapValues { it.value.size }
+        } catch (e: Exception) {}
     }
 
-    val minYearMonth = remember { YearMonth.of(today.year, Month.JANUARY) }
-    val maxYearMonth = remember { YearMonth.of(today.year, today.month) }
-    val canPrev = displayYearMonth > minYearMonth
-    val canNext = displayYearMonth < maxYearMonth
-
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    Column(Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Text("Profile", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        // Name edit section
-        if (editing) {
-            OutlinedTextField(value = temp, onValueChange = { temp = it.take(24) }, label = { Text("Name") })
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { if (temp.trim().length>=2) { onNameChange(temp.trim()); editing=false } }) { Text("Save") }
-                OutlinedButton(onClick = { editing=false; temp=name }) { Text("Cancel") }
-            }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(temp, style = MaterialTheme.typography.titleLarge)
-                TextButton(onClick = { editing = true }) { Text("Edit") }
-            }
-        }
-        // Level / XP section
-        Text("Level ${levelInfo.level}  ${levelInfo.rank}")
-        LinearProgressIndicator(progress = levelInfo.progressPercent/100f, modifier = Modifier.fillMaxWidth())
-        Text("XP: $xp  •  Next Level: ${levelInfo.xpNeededToLevel} XP")
-        Text("Current streak: ${currentStreak} day${if (currentStreak==1) "" else "s"}", style = MaterialTheme.typography.bodyMedium)
-        Text("Longest streak (last 12 months): $longestStreak day${if (longestStreak==1) "" else "s"}", style = MaterialTheme.typography.labelSmall)
-
-        // Month navigation header
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { if (canPrev) displayYearMonth = displayYearMonth.minusMonths(1) }, enabled = canPrev) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Previous Month")
-            }
-            Text(displayYearMonth.month.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " ${displayYearMonth.year}", style = MaterialTheme.typography.titleMedium)
-            IconButton(onClick = { if (canNext) displayYearMonth = displayYearMonth.plusMonths(1) }, enabled = canNext) {
-                Icon(Icons.Default.ArrowForward, contentDescription = "Next Month")
-            }
-        }
-
-        CalendarMonthGrid(
-            monthDays = monthDays,
-            firstOffset = monthFirstWeekOffset,
-            goalDates = goalDates,
-            today = today
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            AssistChip(onClick = {}, label = { Text("Goal Met") }, colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.primaryContainer))
-            AssistChip(onClick = {}, label = { Text("Today") })
-            AssistChip(onClick = {}, label = { Text("Missed") }, colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceVariant))
-        }
-    }
-}
-
-@Composable
-private fun CalendarMonthGrid(
-    monthDays: List<LocalDate>,
-    firstOffset: Int,
-    goalDates: Set<LocalDate>,
-    today: LocalDate
-) {
-    val dayLabels = listOf("S","M","T","W","T","F","S")
-    Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            dayLabels.forEach { d -> Text(d, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
-        }
-        val totalCells = firstOffset + monthDays.size
-        val rows = (totalCells + 6) / 7
-        var dayIndex = 0
-        for (r in 0 until rows) {
-            Row(Modifier.fillMaxWidth()) {
-                for (c in 0 until 7) {
-                    val cell = r*7 + c
-                    if (cell < firstOffset || dayIndex >= monthDays.size) {
-                        Box(Modifier.weight(1f).aspectRatio(1f)) {}
-                    } else {
-                        val date = monthDays[dayIndex++]
-                        val met = date in goalDates
-                        val isToday = date == today
-                        val bg = when {
-                            met -> MaterialTheme.colorScheme.primaryContainer
-                            isToday -> MaterialTheme.colorScheme.secondaryContainer
-                            else -> MaterialTheme.colorScheme.surfaceVariant
-                        }
-                        val fg = if (met) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                        Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .aspectRatio(1f)
-                                .padding(2.dp),
-                            tonalElevation = if (isToday) 2.dp else 0.dp,
-                            shape = MaterialTheme.shapes.small,
-                            color = bg
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(date.dayOfMonth.toString(), style = MaterialTheme.typography.labelMedium, color = fg, fontWeight = if (met) FontWeight.Bold else FontWeight.Normal)
-                            }
-                        }
+        
+        // Name & Level
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (editing) {
+                    OutlinedTextField(value = temp, onValueChange = { temp = it.take(24) }, label = { Text("Name") })
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { if (temp.trim().length>=2) { onNameChange(temp.trim()); editing=false } }) { Text("Save") }
+                        OutlinedButton(onClick = { editing=false; temp=name }) { Text("Cancel") }
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(temp, style = MaterialTheme.typography.headlineSmall)
+                        IconButton(onClick = { editing = true }) { Icon(Icons.Default.Edit, "Edit") }
                     }
                 }
+                Text("Level ${levelInfo.level} • ${levelInfo.rank}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                LinearProgressIndicator(progress = levelInfo.progressPercent/100f, modifier = Modifier.fillMaxWidth())
+                Text("${levelInfo.currentXp} XP / ${levelInfo.xpForNextLevel} XP", style = MaterialTheme.typography.bodySmall)
             }
+        }
+
+        // Visualizations
+        Text("Activity Heatmap", style = MaterialTheme.typography.titleMedium)
+        ContributionHeatMap(heatMapData, Modifier.height(100.dp).padding(vertical = 8.dp))
+        
+        Text("Reps Trend (Last 14 Days)", style = MaterialTheme.typography.titleMedium)
+        LineChart(lineChartData, Modifier.fillMaxWidth().height(200.dp))
+
+        // History List
+        Text("Recent History", style = MaterialTheme.typography.titleMedium)
+        sessions.take(10).forEach { session ->
+             val name = com.example.workouttracker.Utils.capitalize(session.exercise.replace("_", " "))
+             ListItem(
+                headlineContent = { Text(name, fontWeight = FontWeight.Bold) },
+                supportingContent = { Text("${session.reps} reps • ${session.totalXp} XP • ${session.timestampIso.take(10)}") }
+            )
+             Divider()
         }
     }
 }

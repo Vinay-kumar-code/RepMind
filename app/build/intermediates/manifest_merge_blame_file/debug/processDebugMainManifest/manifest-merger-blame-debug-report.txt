@@ -9,18 +9,18 @@
 9        android:targetSdkVersion="34" />
 10
 11    <uses-permission android:name="android.permission.CAMERA" />
-11-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:5:5-65
-11-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:5:22-62
+11-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:5:5-65
+11-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:5:22-62
 12
 13    <uses-feature
-13-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:6:5-84
+13-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:6:5-84
 14        android:name="android.hardware.camera"
-14-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:6:19-57
+14-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:6:19-57
 15        android:required="true" />
-15-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:6:58-81
+15-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:6:58-81
 16    <uses-feature android:name="android.hardware.camera.autofocus" />
-16-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:7:5-70
-16-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:7:19-67
+16-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:7:5-70
+16-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:7:19-67
 17
 18    <permission
 18-->[androidx.core:core:1.12.0] C:\Users\vinay\.gradle\caches\transforms-4\9815be9122b1c6da2954a54a27bed45d\transformed\core-1.12.0\AndroidManifest.xml:22:5-24:47
@@ -41,46 +41,46 @@
 25-->[com.google.android.datatransport:transport-backend-cct:3.1.0] C:\Users\vinay\.gradle\caches\transforms-4\5d8a555bb17c4065e339dc49f4b6a268\transformed\transport-backend-cct-3.1.0\AndroidManifest.xml:26:22-64
 26
 27    <application
-27-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:9:5-29:19
+27-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:9:5-29:19
 28        android:allowBackup="true"
-28-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:10:9-35
+28-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:10:9-35
 29        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
 29-->[androidx.core:core:1.12.0] C:\Users\vinay\.gradle\caches\transforms-4\9815be9122b1c6da2954a54a27bed45d\transformed\core-1.12.0\AndroidManifest.xml:28:18-86
 30        android:dataExtractionRules="@xml/data_extraction_rules"
-30-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:11:9-65
+30-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:11:9-65
 31        android:debuggable="true"
 32        android:extractNativeLibs="false"
 33        android:fullBackupContent="@xml/backup_rules"
-33-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:12:9-54
+33-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:12:9-54
 34        android:icon="@mipmap/ic_launcher"
-34-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:13:9-43
+34-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:13:9-43
 35        android:label="@string/app_name"
-35-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:14:9-41
+35-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:14:9-41
 36        android:roundIcon="@mipmap/ic_launcher_round"
-36-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:15:9-54
+36-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:15:9-54
 37        android:supportsRtl="true"
-37-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:16:9-35
+37-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:16:9-35
 38        android:theme="@style/Theme.WorkoutTracker" >
-38-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:17:9-52
+38-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:17:9-52
 39        <activity
-39-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:19:9-28:20
+39-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:19:9-28:20
 40            android:name="com.example.workouttracker.MainActivity"
-40-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:20:13-41
+40-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:20:13-41
 41            android:exported="true"
-41-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:21:13-36
+41-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:21:13-36
 42            android:label="@string/app_name"
-42-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:22:13-45
+42-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:22:13-45
 43            android:theme="@style/Theme.WorkoutTracker" >
-43-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:23:13-56
+43-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:23:13-56
 44            <intent-filter>
-44-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:24:13-27:29
+44-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:24:13-27:29
 45                <action android:name="android.intent.action.MAIN" />
-45-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:25:17-69
-45-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:25:25-66
+45-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:25:17-69
+45-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:25:25-66
 46
 47                <category android:name="android.intent.category.LAUNCHER" />
-47-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:26:17-77
-47-->C:\Users\vinay\OneDrive\Documents\Codes\Workout app\app\src\main\AndroidManifest.xml:26:27-74
+47-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:26:17-77
+47-->C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\AndroidManifest.xml:26:27-74
 48            </intent-filter>
 49        </activity>
 50        <activity

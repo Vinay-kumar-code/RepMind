@@ -1,0 +1,72 @@
+﻿Starting a Gradle Daemon, 2 incompatible and 1 stopped Daemons could not be reused, use --status for details
+.\gradlew.bat : Warning: SDK processing. This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were 
+released at different times.
+At line:1 char:65
++ ... d Studio\jbr'; .\gradlew.bat assembleDebug > build_log_fix_3.txt 2>&1
++                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Warning: SDK     pr...ifferent times.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:mergeDebugStartupProfile UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :app:kspDebugKotlin
+
+> Task :app:compileDebugKotlin
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/WorkoutEngine.kt:127:13 Variable 'dt' is never used
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/WorkoutEngine.kt:150:25 Variable 'leftAngle' initializer is redundant
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/WorkoutEngine.kt:150:53 Variable 'rightAngle' initializer is redundant
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/WorkoutEngine.kt:226:25 Variable 'leftAngle' initializer is redundant
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/WorkoutEngine.kt:226:53 Variable 'rightAngle' initializer is redundant
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/WorkoutEngine.kt:404:57 Parameter 'ts' is never used
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/WorkoutEngine.kt:417:13 'when' is exhaustive so 'else' is redundant here
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/WorkoutEngine.kt:426:13 'when' is exhaustive so 'else' is redundant here
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/ui/PreviewCameraView.kt:63:22 'setTargetResolution(Size): ImageAnalysis.Builder' is deprecated. Deprecated in Java
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/ui/WorkoutApp.kt:301:5 Parameter 'xp' is never used
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/ui/WorkoutApp.kt:302:5 Parameter 'dailyState' is never used
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/ui/WorkoutApp.kt:377:18 Name shadowed: name
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/ui/WorkoutSessionScreen.kt:42:5 Parameter 'levelInfo' is never used
+w: file:///C:/Users/vinay/OneDrive/Documents/Codes/RepMind/app/src/main/java/com/example/workouttracker/ui/WorkoutSessionScreen.kt:43:5 Parameter 'dailyState' is never used
+
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugGlobalSynthetics UP-TO-DATE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :app:assembleDebug
+
+BUILD SUCCESSFUL in 34s
+38 actionable tasks: 5 executed, 33 up-to-date

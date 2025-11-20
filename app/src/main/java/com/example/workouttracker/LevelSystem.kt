@@ -78,4 +78,7 @@ object LevelSystem {
     fun xpPerPushup() = 0.1f // 10 pushups = 1 XP
     fun xpPerSquat() = 0.1f   // 10 squats = 1 XP
     fun xpPerBicepCurl() = 1f / 30f // 30 curls (one arm) = 1 XP
+    fun xpPerLunge() = 0.15f // Harder than squat
+    fun xpPerShoulderPress() = 0.1f
+    fun xpPerJumpingJack() = 0.05f // 20 jacks = 1 XP
 }

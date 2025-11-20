@@ -88,40 +88,12 @@ fun PoseOverlay(
             }
         }
 
-        // Feedback HUD
+        // Feedback HUD - Removed as per user request for cleaner UI
+        // The main HUD in WorkoutSessionScreen now handles the primary feedback.
+        /*
         if (feedback != null) {
-            val stageLabel = when (feedback.stage) {
-                "descent" -> "Going Down"
-                "bottom_hold" -> if (feedback.validDepth) "Hold (Good Depth)" else "Hold (Deeper)"
-                "ascent" -> "Pushing Up"
-                else -> "Ready"
-            }
-            val color = when {
-                feedback.validDepth && feedback.stage == "ascent" && feedback.rangeOk -> Color(0xFF10B981)
-                feedback.validDepth && feedback.stage == "bottom_hold" -> Color(0xFF10B981)
-                !feedback.validDepth && feedback.stage == "bottom_hold" -> Color(0xFFF59E0B)
-                else -> Color.White
-            }
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .background(Color.Black.copy(alpha = 0.35f))
-                    .padding(8.dp)
-            ) {
-                Text(
-                    text = buildString {
-                        append("Reps: "); append(feedback.reps)
-                        append("  Stage: "); append(stageLabel)
-                        append("\nDepth: "); append(feedback.depthPercent).append("%")
-                        append("  Form: "); append(feedback.formScore).append("%")
-                        append("\nAmpΔ: "); append(String.format("%.1f", feedback.amplitudeAngleDelta))
-                        append("  Range: "); append(if (feedback.rangeOk) "OK" else "LOW")
-                        if (feedback.repImminent && feedback.rangeOk) append("  ✔")
-                    },
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = color
-                )
-            }
+             // ... (legacy debug text code)
         }
+        */
     }
 }

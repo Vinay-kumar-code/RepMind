@@ -99,4 +99,8 @@ object Utils {
                landmarks.size >= 17 && 
                landmarks.all { it.size >= 3 } // x, y, visibility
     }
+
+    fun capitalize(str: String): String {
+        return str.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    }
 }

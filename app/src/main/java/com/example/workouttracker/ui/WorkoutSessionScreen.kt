@@ -1,14 +1,14 @@
 package com.example.workouttracker.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,6 +17,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.workouttracker.SoundManager
 import com.example.workouttracker.WorkoutEngine
 import com.example.workouttracker.WorkoutEngine.ExerciseType
 import com.example.workouttracker.LevelSystem
@@ -30,7 +32,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun WorkoutSessionScreen(
     repo: SessionRepository,
@@ -41,11 +43,15 @@ fun WorkoutSessionScreen(
     dailyState: ProgressManager.DailyState?,
     onExerciseChange: (ExerciseType) -> Unit
 ) {
-    // Keep screen on while this composable is in composition
     val view = LocalView.current
     DisposableEffect(Unit) {
         view.keepScreenOn = true
         onDispose { view.keepScreenOn = false }
+    }
+
+    val soundManager = remember { SoundManager() }
+    DisposableEffect(Unit) {
+        onDispose { soundManager.release() }
     }
 
     var reps by remember { mutableStateOf(0) }
@@ -54,17 +60,26 @@ fun WorkoutSessionScreen(
     var isSessionActive by remember { mutableStateOf(false) }
     var exercise by remember { mutableStateOf(engine.getExerciseType()) }
     var showHistory by remember { mutableStateOf(false) }
-    val historySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    // Live feedback from engine
+    var showExerciseSheet by remember { mutableStateOf(false) }
+    
+    // Live feedback
     var feedback by remember { mutableStateOf(engine.getLastFeedback()) }
+    var lastReps by remember { mutableStateOf(0) }
 
     LaunchedEffect(Unit) {
         while (true) {
-            reps = engine.getReps()
-            xp = engine.getTotalXp() // session integer XP
+            val currentReps = engine.getReps()
+            xp = engine.getTotalXp()
             feedback = engine.getLastFeedback()
-            delay(250)
+            
+            // Sound Logic
+            if (currentReps > lastReps) {
+                val isMilestone = (currentReps % 10 == 0)
+                if (isMilestone) soundManager.playMilestoneSound()
+                lastReps = currentReps
+            }
+            reps = currentReps
+            delay(50) // Faster polling for smooth UI
         }
     }
 
@@ -74,150 +89,210 @@ fun WorkoutSessionScreen(
         engine.reset()
         reps = 0
         xp = 0
+        lastReps = 0
         isSessionActive = false
         sessionStartMs = 0L
     }
 
-    // Approximate fractional XP progress (not yet granted to profile)
-    val perRepXp = when (exercise) {
-        ExerciseType.PUSHUP -> LevelSystem.xpPerPushup()
-        ExerciseType.SQUAT -> LevelSystem.xpPerSquat()
-        ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT -> LevelSystem.xpPerBicepCurl()
-    }
-    val fractionalProgress = (reps * perRepXp) - xp
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // 1. Camera Preview (Full Screen)
+        PreviewCameraView(
+            engine = engine,
+            modifier = Modifier.fillMaxSize(),
+            performanceSettings = performanceSettings,
+            showLandmarks = performanceSettings.showLandmarks
+        )
 
-    // Replace BottomSheetScaffold floatingActionButton usage: first build sheet + preview inside Box
-    Box(Modifier.fillMaxSize()) {
-        val scaffoldState = rememberBottomSheetScaffoldState()
-        BottomSheetScaffold(
-            scaffoldState = scaffoldState,
-            sheetPeekHeight = 140.dp,
-            sheetDragHandle = { BottomSheetDefaults.DragHandle() },
-            sheetContent = {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+        // 2. HUD Overlay
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            // Top Bar
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f))
                 ) {
-                    // Top Row: Back + Exercise selector + Reset + History
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        FilledTonalButton(onClick = onBack, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
-                            Text("Back")
+                    Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+                }
+
+                // Exercise Selector Button
+                FilledTonalButton(
+                    onClick = { showExerciseSheet = true },
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
+                    )
+                ) {
+                    Text(exercise.name.replace("_", " "), style = MaterialTheme.typography.titleMedium)
+                    Icon(Icons.Default.ArrowDropDown, null)
+                }
+
+                IconButton(
+                    onClick = { showHistory = true },
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f))
+                ) {
+                    Icon(Icons.Default.History, "History", tint = Color.White)
+                }
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            // Center HUD: Rep Counter & Form Arc
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Form Arc (Canvas)
+                val depth = feedback.depthPercent / 100f
+                val rangeOk = feedback.rangeOk
+                val color = if (rangeOk) Color.Green else Color.Yellow
+                
+                Canvas(modifier = Modifier.size(200.dp)) {
+                    drawArc(
+                        color = Color.White.copy(alpha = 0.3f),
+                        startAngle = 135f,
+                        sweepAngle = 270f,
+                        useCenter = false,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 20f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                    )
+                    drawArc(
+                        color = color,
+                        startAngle = 135f,
+                        sweepAngle = 270f * depth,
+                        useCenter = false,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 20f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                    )
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "$reps",
+                        style = MaterialTheme.typography.displayLarge.copy(
+                            fontSize = 80.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    )
+                    Text(
+                        text = "REPS",
+                        style = MaterialTheme.typography.labelLarge.copy(color = Color.White.copy(alpha = 0.8f))
+                    )
+                }
+            }
+            
+            // Feedback Text
+            AnimatedVisibility(
+                visible = feedback.stage == "down" || !feedback.rangeOk,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            ) {
+                Surface(
+                    color = if (feedback.rangeOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.padding(top = 16.dp)
+                ) {
+                    Text(
+                        text = if (feedback.rangeOk) "Good Depth!" else "Go Deeper!",
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            // Bottom Controls
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 32.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Reset
+                IconButton(
+                    onClick = { engine.reset(); reps = 0; xp = 0; lastReps = 0; isSessionActive = false; sessionStartMs = 0L },
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Icon(Icons.Default.Refresh, "Reset")
+                }
+
+                // Play/Pause/Save
+                FloatingActionButton(
+                    onClick = {
+                        if (!isSessionActive) {
+                            sessionStartMs = System.currentTimeMillis()
+                            isSessionActive = true
+                        } else if (reps > 0) {
+                            saveSession(repo, reps, xp, sessionStartMs, exercise)
+                            engine.reset()
+                            reps = 0; xp = 0; lastReps = 0; isSessionActive = false; sessionStartMs = 0L
+                        } else {
+                            isSessionActive = false // Pause? Or just stop empty session
                         }
-                        // Exercise selection chips
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ExerciseType.values().forEach { type ->
+                    },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(72.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isSessionActive && reps > 0) Icons.Default.Save else if (isSessionActive) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = "Action",
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+                
+                // Stats Mini-View
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("XP", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                    Text("$xp", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+
+        // Exercise Selection Sheet
+        if (showExerciseSheet) {
+            ModalBottomSheet(onDismissRequest = { showExerciseSheet = false }) {
+                Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+                    Text("Select Workout", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(bottom = 16.dp))
+                    
+                    val categories = mapOf(
+                        "Essentials" to listOf(ExerciseType.PUSHUP, ExerciseType.SQUAT, ExerciseType.LUNGES),
+                        "Arms & Core" to listOf(ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT, ExerciseType.SHOULDER_PRESS),
+                        "Flexibility & Cardio" to listOf(ExerciseType.JUMPING_JACKS)
+                    )
+                    
+                    categories.forEach { (category, types) ->
+                        Text(category, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 8.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            types.forEach { type ->
                                 FilterChip(
                                     selected = exercise == type,
-                                    onClick = { applyExercise(type) },
-                                    label = { Text(type.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                                    onClick = { applyExercise(type); showExerciseSheet = false },
+                                    label = { Text(com.example.workouttracker.Utils.capitalize(type.name.replace("_", " ").lowercase())) }
                                 )
                             }
                         }
-                        IconButton(onClick = { engine.reset(); sessionStartMs = 0L; isSessionActive = false; reps = 0; xp = 0 }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Reset")
-                        }
-                        IconButton(onClick = { showHistory = true }) {
-                            Icon(Icons.Default.History, contentDescription = "History")
-                        }
                     }
-                    // Stats
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column { Text("Reps", style = MaterialTheme.typography.labelSmall); Text(reps.toString(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
-                        Column { Text("XP", style = MaterialTheme.typography.labelSmall); Text(xp.toString(), style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
-                        Column { Text("Stage", style = MaterialTheme.typography.labelSmall); Text(feedback.stage, style = MaterialTheme.typography.titleMedium) }
-                        Column { Text("Depth%", style = MaterialTheme.typography.labelSmall); Text(feedback.depthPercent.toString(), style = MaterialTheme.typography.titleMedium) }
-                    }
-                    // Show fractional XP progress if any
-                    if (fractionalProgress > 0f) {
-                        LinearProgressIndicator(
-                            progress = (fractionalProgress / 1f).coerceIn(0f, 1f),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text("Next XP: ${(fractionalProgress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
-                    }
-                    // Feedback chips
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        AssistChip(onClick = {}, label = { Text("Amplitude ${feedback.amplitudeAngleDelta.toInt()}°") })
-                        AssistChip(onClick = {}, label = { Text(if (feedback.rangeOk) "Range OK" else "More Depth") }, colors = AssistChipDefaults.assistChipColors())
-                        if (feedback.repImminent) {
-                            AssistChip(onClick = {}, label = { Text("Rep...") })
-                        }
-                    }
-                    // Daily goals inline (compact)
-                    dailyState?.let { ds ->
-                        LinearProgressIndicator(
-                            progress = (ds.pushups.toFloat() / ds.goals.push).coerceIn(0f,1f),
-                            modifier = Modifier.fillMaxWidth(),
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            "Daily P ${ds.pushups}/${ds.goals.push}  S ${ds.squats}/${ds.goals.squat}  B ${(ds.bicepLeft+ds.bicepRight)}/${ds.goals.bicep}",
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(32.dp))
                 }
-            },
-        ) { inner ->
-            // Camera preview background
-            PreviewCameraView(
-                engine = engine,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(inner),
-                performanceSettings = performanceSettings
-            )
+            }
         }
 
-        // Overlay FAB bottom end
-        ExtendedFloatingActionButton(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = 180.dp), // above sheet
-            onClick = {
-                if (!isSessionActive) {
-                    sessionStartMs = System.currentTimeMillis(); isSessionActive = true
-                } else if (reps > 0) {
-                    saveSession(repo, reps, xp, sessionStartMs, exercise)
-                    engine.reset(); sessionStartMs = 0L; isSessionActive = false; reps = 0; xp = 0
-                }
-            },
-            icon = {
-                Icon(
-                    when {
-                        !isSessionActive -> Icons.Default.PlayArrow
-                        isSessionActive && reps > 0 -> Icons.Default.Save
-                        else -> Icons.Default.Pause
-                    }, contentDescription = null
-                )
-            },
-            text = { Text(
-                when {
-                    !isSessionActive -> "Start"
-                    isSessionActive && reps > 0 -> "Save"
-                    else -> "Active"
-                }
-            ) }
-        )
-
         if (showHistory) {
-            ModalBottomSheet(
-                onDismissRequest = { showHistory = false },
-                sheetState = historySheetState,
-                windowInsets = WindowInsets(0,0,0,0)
-            ) {
+            ModalBottomSheet(onDismissRequest = { showHistory = false }) {
                 HistoryScreen(repo = repo, onClose = { showHistory = false })
             }
         }
     }
 }
+
+// Helper for capitalization
+// fun String.capitalize() = replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 
 private fun saveSession(
     repo: SessionRepository,
@@ -233,12 +308,7 @@ private fun saveSession(
     val timestampIso = now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
     val session = com.example.workouttracker.db.SessionEntity(
         timestampIso = timestampIso,
-        exercise = when (exercise) {
-            ExerciseType.PUSHUP -> "pushups"
-            ExerciseType.SQUAT -> "squats"
-            ExerciseType.BICEP_LEFT -> "bicep_left"
-            ExerciseType.BICEP_RIGHT -> "bicep_right"
-        },
+        exercise = exercise.name.lowercase(),
         reps = reps,
         durationSeconds = durationSecs,
         totalXp = xp
