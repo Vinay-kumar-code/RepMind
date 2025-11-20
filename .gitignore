@@ -1,0 +1,40 @@
+# === Android / Gradle / IntelliJ ===
+
+# Gradle
+.gradle/
+**/build/
+!gradle/wrapper/gradle-wrapper.properties
+!gradle/wrapper/
+!gradlew
+!gradlew.bat
+
+# Local configuration
+local.properties
+.idea/
+*.iml
+
+# Android Studio / IntelliJ
+*.iws
+*.ipr
+out/
+
+# Log files
+*.log
+build_log*.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Kotlin / Java
+*.class
+
+# Generated sources (kept via build/, but safe if any outside)
+**/generated/
+
+# Misc
+*.apk
+*.aab
+
+# Ignore agent/workspace helpers
+.agent/

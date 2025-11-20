@@ -68,9 +68,9 @@ com.example.workouttracker.app-coordinatorlayout-1.1.0-66 C:\Users\vinay\.gradle
 com.example.workouttracker.app-ui-geometry-release-67 C:\Users\vinay\.gradle\caches\transforms-4\fc886ac5b2caf6fdc8585231b0b2a03b\transformed\ui-geometry-release\res
 com.example.workouttracker.app-lifecycle-runtime-ktx-2.7.0-68 C:\Users\vinay\.gradle\caches\transforms-4\fcb6b6e5a7fbca561e247abdc65c8636\transformed\lifecycle-runtime-ktx-2.7.0\res
 com.example.workouttracker.app-animation-release-69 C:\Users\vinay\.gradle\caches\transforms-4\fe1997f7566e953e404b092b7a11e719\transformed\animation-release\res
-com.example.workouttracker.app-resValues-70 C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\build\generated\res\resValues\debug
-com.example.workouttracker.app-packageDebugResources-71 C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
-com.example.workouttracker.app-packageDebugResources-72 C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
-com.example.workouttracker.app-debug-73 C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\build\intermediates\merged_res\debug\mergeDebugResources
-com.example.workouttracker.app-debug-74 C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\debug\res
-com.example.workouttracker.app-main-75 C:\Users\vinay\OneDrive\Documents\Codes\RepMind\app\src\main\res
+com.example.workouttracker.app-resValues-70 C:\Users\vinay\Downloads\RepMind\app\build\generated\res\resValues\debug
+com.example.workouttracker.app-packageDebugResources-71 C:\Users\vinay\Downloads\RepMind\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.example.workouttracker.app-packageDebugResources-72 C:\Users\vinay\Downloads\RepMind\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.example.workouttracker.app-debug-73 C:\Users\vinay\Downloads\RepMind\app\build\intermediates\merged_res\debug\mergeDebugResources
+com.example.workouttracker.app-debug-74 C:\Users\vinay\Downloads\RepMind\app\src\debug\res
+com.example.workouttracker.app-main-75 C:\Users\vinay\Downloads\RepMind\app\src\main\res
