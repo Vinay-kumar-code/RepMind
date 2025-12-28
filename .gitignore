@@ -12,11 +12,20 @@
 local.properties
 .idea/
 *.iml
+*.ids
+*.ipr
+*.iws
 
 # Android Studio / IntelliJ
-*.iws
-*.ipr
 out/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+.idea/dictionaries
+.idea/libraries
+.idea/caches
+.idea/runConfigurations.xml
 
 # Log files
 *.log
@@ -25,6 +34,8 @@ build_log*.txt
 # OS files
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 
 # Kotlin / Java
 *.class
@@ -35,6 +46,18 @@ Thumbs.db
 # Misc
 *.apk
 *.aab
+*.ap_
+*.dex
 
 # Ignore agent/workspace helpers
 .agent/
+
+# Captures
+captures/
+
+# External native build folder
+.externalNativeBuild/
+.cxx/
+
+# Google Services
+google-services.json
