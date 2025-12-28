@@ -4,6 +4,7 @@ import android.graphics.Paint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -14,10 +15,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.util.Locale
 
 @Composable
 fun LineChart(
@@ -112,6 +117,100 @@ fun ContributionHeatMap(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun CalendarView(
+    activeDates: Set<String>, // Set of YYYY-MM-DD strings
+    modifier: Modifier = Modifier
+) {
+    val today = LocalDate.now()
+    val yearMonth = YearMonth.from(today)
+    val daysInMonth = yearMonth.lengthOfMonth()
+    val firstDayOfWeek = yearMonth.atDay(1).dayOfWeek.value % 7 // 0=Sunday, 1=Monday... depending on locale, let's assume 0=Sun for grid
+    
+    Column(modifier.fillMaxWidth()) {
+        // Month Header
+        Text(
+            text = "${today.month.getDisplayName(TextStyle.FULL, Locale.getDefault())} ${today.year}",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        
+        // Days Header
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            listOf("S", "M", "T", "W", "T", "F", "S").forEach { 
+                Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.width(32.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+        
+        Spacer(Modifier.height(8.dp))
+        
+        // Days Grid
+        var currentDay = 1
+        var currentWeekDay = 0
+        
+        // Initial padding
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            // Fill empty slots
+            for (i in 0 until firstDayOfWeek) {
+                Spacer(Modifier.width(32.dp))
+                currentWeekDay++
+            }
+            
+            while (currentDay <= daysInMonth) {
+                if (currentWeekDay > 6) {
+                    currentWeekDay = 0
+                    // End of row
+                    }
+                if (currentWeekDay == 0 && currentDay > 1) {
+                     // New Row logic is hard in a single loop with Compose Rows.
+                     // Better to use a Grid or nested Columns/Rows.
+                     // Let's use a simple flow logic or just fixed rows.
+                }
+                // Wait, standard Row/Column approach is tricky for calendar.
+                // Let's restart the loop structure.
+                break 
+            }
+        }
+        
+        // Better approach: Calculate rows
+        val totalSlots = firstDayOfWeek + daysInMonth
+        val rows = (totalSlots + 6) / 7
+        
+        for (row in 0 until rows) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                for (col in 0..6) {
+                    val dayNum = row * 7 + col - firstDayOfWeek + 1
+                    if (dayNum in 1..daysInMonth) {
+                        val dateStr = LocalDate.of(today.year, today.month, dayNum).format(DateTimeFormatter.ISO_LOCAL_DATE)
+                        val isActive = activeDates.contains(dateStr)
+                        val isToday = dayNum == today.dayOfMonth
+                        
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(
+                                    color = if (isActive) MaterialTheme.colorScheme.primary else if (isToday) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+                                    shape = CircleShape
+                                )
+                        ) {
+                            Text(
+                                text = "$dayNum",
+                                color = if (isActive) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    } else {
+                        Spacer(Modifier.width(32.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }

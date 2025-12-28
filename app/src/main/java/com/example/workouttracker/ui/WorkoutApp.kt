@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.*
+import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
@@ -311,10 +312,25 @@ private fun ProfileScreen(
     var lineChartData by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
     var heatMapData by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     
+    var todayXp by remember { mutableStateOf(0) }
+    var weekXp by remember { mutableStateOf(0) }
+    var monthXp by remember { mutableStateOf(0) }
+    var activeDates by remember { mutableStateOf<Set<String>>(emptySet()) }
+
     LaunchedEffect(Unit) {
         val all = withContext(Dispatchers.IO) { repo.getAllSessions() }.sortedByDescending { it.timestampIso }
         sessions = all
         
+        // XP Stats
+        val today = LocalDate.now()
+        val todayStr = today.format(DateTimeFormatter.ISO_LOCAL_DATE)
+        val weekStart = today.minusDays(6).format(DateTimeFormatter.ISO_LOCAL_DATE)
+        val monthStart = today.minusDays(29).format(DateTimeFormatter.ISO_LOCAL_DATE)
+        
+        todayXp = withContext(Dispatchers.IO) { repo.getXpBetween(todayStr + "T00:00:00", todayStr + "T23:59:59") }
+        weekXp = withContext(Dispatchers.IO) { repo.getXpBetween(weekStart + "T00:00:00", todayStr + "T23:59:59") }
+        monthXp = withContext(Dispatchers.IO) { repo.getXpBetween(monthStart + "T00:00:00", todayStr + "T23:59:59") }
+
         // Process charts
         try {
             val dateFormatter = java.time.format.DateTimeFormatter.ofPattern("MM-dd")
@@ -337,6 +353,8 @@ private fun ProfileScreen(
                     instant.atZone(ZoneId.systemDefault()).toLocalDate().format(heatMapFormatter)
                 } catch (e: Exception) { LocalDate.now().toString() }
             }.mapValues { it.value.size }
+            
+            activeDates = heatMapData.keys
         } catch (e: Exception) {}
     }
 
@@ -364,9 +382,20 @@ private fun ProfileScreen(
             }
         }
 
+        // XP Stats Cards
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            XpStatCard("Today", todayXp, Modifier.weight(1f))
+            XpStatCard("7 Days", weekXp, Modifier.weight(1f))
+            XpStatCard("30 Days", monthXp, Modifier.weight(1f))
+        }
+
         // Visualizations
-        Text("Activity Heatmap", style = MaterialTheme.typography.titleMedium)
-        ContributionHeatMap(heatMapData, Modifier.height(100.dp).padding(vertical = 8.dp))
+        Text("Calendar Streak", style = MaterialTheme.typography.titleMedium)
+        Card(Modifier.fillMaxWidth()) {
+            Box(Modifier.padding(16.dp)) {
+                CalendarView(activeDates)
+            }
+        }
         
         Text("Reps Trend (Last 14 Days)", style = MaterialTheme.typography.titleMedium)
         LineChart(lineChartData, Modifier.fillMaxWidth().height(200.dp))
@@ -380,6 +409,17 @@ private fun ProfileScreen(
                 supportingContent = { Text("${session.reps} reps • ${session.totalXp} XP • ${session.timestampIso.take(10)}") }
             )
              Divider()
+        }
+    }
+}
+
+@Composable
+fun XpStatCard(label: String, xp: Int, modifier: Modifier = Modifier) {
+    Card(modifier) {
+        Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, style = MaterialTheme.typography.labelSmall)
+            Text("$xp", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+            Text("XP", style = MaterialTheme.typography.labelSmall)
         }
     }
 }

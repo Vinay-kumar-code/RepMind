@@ -58,6 +58,9 @@ interface SessionDao {
     @Query("SELECT SUM(totalXp) FROM sessions")
     suspend fun getTotalXp(): Int?
 
+    @Query("SELECT SUM(totalXp) FROM sessions WHERE timestampIso >= :startDate AND timestampIso <= :endDate")
+    suspend fun getXpSumBetween(startDate: String, endDate: String): Int?
+
     // Daily progress
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDaily(progress: DailyProgressEntity)

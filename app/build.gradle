@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         // Changed applicationId for branding rename to Track Mate. Package namespaces in source remain to avoid large refactor.
-        applicationId "com.trackmate"
+        applicationId "com.trackmate.v2"
         minSdk 26
         targetSdk 34
         versionCode 1

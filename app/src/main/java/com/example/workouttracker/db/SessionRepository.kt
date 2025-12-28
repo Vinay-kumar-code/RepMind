@@ -15,6 +15,8 @@ class SessionRepository(private val dao: SessionDao) {
     suspend fun getTotalRepsForExercise(exercise: String): Int = dao.getTotalRepsForExercise(exercise) ?: 0
     
     suspend fun getTotalXp(): Int = dao.getTotalXp() ?: 0
+    
+    suspend fun getXpBetween(start: String, end: String): Int = dao.getXpSumBetween(start, end) ?: 0
 
     // Daily progress
     suspend fun upsertDaily(dp: DailyProgressEntity) = dao.upsertDaily(dp)

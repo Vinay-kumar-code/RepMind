@@ -66,6 +66,9 @@ fun WorkoutSessionScreen(
     var feedback by remember { mutableStateOf(engine.getLastFeedback()) }
     var lastReps by remember { mutableStateOf(0) }
 
+    var autoMode by remember { mutableStateOf(false) }
+    var lastRepChangeTime by remember { mutableStateOf(System.currentTimeMillis()) }
+
     LaunchedEffect(Unit) {
         while (true) {
             val currentReps = engine.getReps()
@@ -76,8 +79,24 @@ fun WorkoutSessionScreen(
             if (currentReps > lastReps) {
                 val isMilestone = (currentReps % 10 == 0)
                 if (isMilestone) soundManager.playMilestoneSound()
+                lastRepChangeTime = System.currentTimeMillis()
+                
+                // Auto Start
+                if (autoMode && !isSessionActive) {
+                    isSessionActive = true
+                    sessionStartMs = System.currentTimeMillis()
+                }
+                
                 lastReps = currentReps
             }
+            
+            // Auto Save Logic (30s inactivity)
+            if (autoMode && isSessionActive && reps > 0 && (System.currentTimeMillis() - lastRepChangeTime > 30000)) {
+                saveSession(repo, reps, xp, sessionStartMs, exercise)
+                engine.reset()
+                reps = 0; xp = 0; lastReps = 0; isSessionActive = false; sessionStartMs = 0L
+            }
+            
             reps = currentReps
             delay(50) // Faster polling for smooth UI
         }
@@ -138,6 +157,18 @@ fun WorkoutSessionScreen(
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f))
                 ) {
                     Icon(Icons.Default.History, "History", tint = Color.White)
+                }
+                
+                // Auto Mode Toggle
+                FilledTonalIconToggleButton(
+                    checked = autoMode,
+                    onCheckedChange = { autoMode = it },
+                    colors = IconButtonDefaults.filledTonalIconToggleButtonColors(
+                        containerColor = Color.Black.copy(alpha = 0.5f),
+                        checkedContainerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Text("A", fontWeight = FontWeight.Bold, color = if (autoMode) Color.Black else Color.White)
                 }
             }
 
