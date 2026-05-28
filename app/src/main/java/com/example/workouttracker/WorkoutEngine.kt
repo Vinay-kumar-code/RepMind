@@ -11,8 +11,8 @@ import java.time.ZonedDateTime
 class WorkoutEngine(private val listener: Listener? = null) {
     interface Listener {
         fun onRepCountUpdated(reps: Int)
-        fun onXpUpdated(totalXp: Int)
-        fun onRepLogged(repIndex: Int, timestampMs: Long, xpEarned: Int)
+        fun onXpUpdated(totalXp: Float)
+        fun onRepLogged(repIndex: Int, timestampMs: Long, xpEarned: Float)
         fun onFrameFeedback(feedback: Feedback) {}
     }
 
@@ -75,8 +75,8 @@ class WorkoutEngine(private val listener: Listener? = null) {
 
     private var stage = "up" // 'up' or 'down'
     private var reps = 0
-    private var totalXp = 0
-    private var xpRemainder = 0f // accumulate fractional XP (PERSISTED across resets to avoid losing partial progress)
+    private var totalXp = 0f
+    var xpMultiplier = 1.0f // Applied to XP gains
     private var lastRepTime = 0L
     private var lastTimestamp = 0L
 
@@ -98,10 +98,9 @@ class WorkoutEngine(private val listener: Listener? = null) {
 
     fun setExerciseType(type: ExerciseType) {
         if (exercise != type) {
-            // Keep fractional XP remainder so partial work on previous exercise contributes later.
-            val keepRemainder = xpRemainder
-            reset() // will reset reps & integer session xp but we'll restore remainder
-            xpRemainder = keepRemainder
+            val oldXp = totalXp
+            reset() // resets reps and totalXp
+            totalXp = oldXp // keep totalXp across exercise switches
             exercise = type
             when(type) {
                 ExerciseType.PUSHUP -> { downAngleThreshold = 100f; upAngleThreshold = 160f; minRepIntervalMs = 600L }
@@ -393,13 +392,13 @@ class WorkoutEngine(private val listener: Listener? = null) {
     private fun visible(lm: List<FloatArray>, a: Int, b: Int, c: Int): Boolean =
         lm[a][2] > VISIBILITY_THRESHOLD && lm[b][2] > VISIBILITY_THRESHOLD && lm[c][2] > VISIBILITY_THRESHOLD
 
-    private fun incrementReps(now: Long, xpGain: Float) {
-        reps += 1; lastRepTime = now; addXp(xpGain)
-        listener?.onRepLogged(reps, now, xpGain.toInt())
+    private fun incrementReps(now: Long, baseXpGain: Float) {
+        val xpGain = baseXpGain * xpMultiplier
+        reps += 1; lastRepTime = now; totalXp += xpGain
+        listener?.onRepLogged(reps, now, xpGain)
         listener?.onRepCountUpdated(reps)
         listener?.onXpUpdated(totalXp)
     }
-    private fun addXp(delta: Float) { xpRemainder += delta; if (xpRemainder >= 1f) { val inc = xpRemainder.toInt(); totalXp += inc; xpRemainder -= inc } }
 
     private fun emitFeedback(left: Float, right: Float, ts: Long) {
         val validLeft = !left.isNaN(); val validRight = !right.isNaN()
@@ -467,11 +466,9 @@ class WorkoutEngine(private val listener: Listener? = null) {
     fun getReps() = reps
     fun getTotalXp() = totalXp
     fun getLastFeedback(): Feedback = lastFeedback
-    fun getXpRemainder(): Float = xpRemainder
 
     fun reset() {
-        // NOTE: xpRemainder intentionally NOT reset so partial progress carries over between sessions/exercise switches.
-        reps = 0; totalXp = 0; stage = "up"; lastRepTime = 0L
+        reps = 0; totalXp = 0f; stage = "up"; lastRepTime = 0L
         leftAngles.clear(); rightAngles.clear(); cycleMinAngle = 180f; cycleMaxAngle = 0f
         bottomReachTime = 0L; topReachTime = 0L; lastTimestamp = 0L
         lastFeedback = Feedback(0,"up",180f,180f,180f,0,0,false,false,0f,true, exercise)

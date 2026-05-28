@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Track Mate V2</string>
+    <string name="app_name">Track Mate</string>
     <string name="camera_permission_required">Camera permission is required for pose detection</string>
     <string name="pushups">Pushups</string>
     <string name="reps">Reps</string>

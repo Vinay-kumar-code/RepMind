@@ -8,11 +8,11 @@ package com.example.workouttracker
 object LevelSystem {
     data class LevelInfo(
         val level: Int,
-        val currentXp: Int,
-        val xpForCurrentLevel: Int,
-        val xpForNextLevel: Int,
-        val xpIntoLevel: Int,
-        val xpNeededToLevel: Int,
+        val currentXp: Float,
+        val xpForCurrentLevel: Float,
+        val xpForNextLevel: Float,
+        val xpIntoLevel: Float,
+        val xpNeededToLevel: Float,
         val progressPercent: Int,
         val pushGoal: Int,
         val squatGoal: Int,
@@ -35,14 +35,14 @@ object LevelSystem {
 
     private fun clampLevel(level: Int) = level.coerceIn(1, MAX_LEVEL)
 
-    fun levelFromXp(totalXp: Int): LevelInfo {
-        val rawLevel = totalXp / XP_PER_LEVEL + 1
+    fun levelFromXp(totalXp: Float): LevelInfo {
+        val rawLevel = (totalXp / XP_PER_LEVEL).toInt() + 1
         val level = clampLevel(rawLevel)
-        val xpForCurrent = (level - 1) * XP_PER_LEVEL
-        val xpForNext = level * XP_PER_LEVEL
+        val xpForCurrent = (level - 1) * XP_PER_LEVEL.toFloat()
+        val xpForNext = level * XP_PER_LEVEL.toFloat()
         val into = totalXp - xpForCurrent
-        val need = (xpForNext - xpForCurrent).coerceAtLeast(1)
-        val pct = ((into.toFloat() / need) * 100f).toInt().coerceIn(0, 100)
+        val need = (xpForNext - xpForCurrent).coerceAtLeast(1f)
+        val pct = ((into / need) * 100f).toInt().coerceIn(0, 100)
 
         // Daily goals scale linearly between (10,10) and (100,100)
         val fraction = (level - 1).toFloat() / (MAX_LEVEL - 1).coerceAtLeast(1)
@@ -81,4 +81,25 @@ object LevelSystem {
     fun xpPerLunge() = 0.15f // Harder than squat
     fun xpPerShoulderPress() = 0.1f
     fun xpPerJumpingJack() = 0.05f // 20 jacks = 1 XP
+
+    fun xpForStandardExercise(exercise: String, reps: Int): Float {
+        val xpPerRep = when (exercise.uppercase()) {
+            "PUSHUPS", "PUSHUP" -> xpPerPushup()
+            "SQUATS", "SQUAT" -> xpPerSquat()
+            "BICEP_LEFT", "BICEP_RIGHT", "BICEP CURLS" -> xpPerBicepCurl()
+            "LUNGES", "LUNGE" -> xpPerLunge()
+            "SHOULDER_PRESS", "SHOULDER PRESS" -> xpPerShoulderPress()
+            "JUMPING_JACKS", "JUMPING JACKS" -> xpPerJumpingJack()
+            else -> 0.1f // Default fallback
+        }
+        return reps * xpPerRep * 0.75f
+    }
+
+    fun xpForManualReps(reps: Int): Float {
+        return (reps / 10f) * 0.75f
+    }
+
+    fun xpForManualDuration(minutes: Int): Float {
+        return (minutes / 5f) * 0.75f
+    }
 }

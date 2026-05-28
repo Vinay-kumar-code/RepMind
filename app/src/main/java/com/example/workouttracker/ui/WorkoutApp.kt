@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -45,8 +46,8 @@ fun WorkoutApp(repo: SessionRepository) {
     val progressManager = remember { ProgressManager(repo, appScope) }
     val dailyState by progressManager.dailyState.collectAsState()
 
-    var profileXp by remember { mutableStateOf(0) }
-    var levelInfo by remember { mutableStateOf(LevelSystem.levelFromXp(0)) }
+    var profileXp by remember { mutableStateOf(0f) }
+    var levelInfo by remember { mutableStateOf(LevelSystem.levelFromXp(0f)) }
     var showLevelUp by remember { mutableStateOf(false) }
     var profileName by remember { mutableStateOf("") }
     var startDestination by remember { mutableStateOf<String?>(null) }
@@ -58,14 +59,14 @@ fun WorkoutApp(repo: SessionRepository) {
     val engine = remember {
         var lastPush = 0
         var lastSquat = 0
-        var sessionAddedXp = 0
+        var sessionAddedXp = 0f
         var lastBicepLeft = 0
         var lastBicepRight = 0
         lateinit var ref: WorkoutEngine
         ref = WorkoutEngine(object : WorkoutEngine.Listener {
             override fun onRepCountUpdated(reps: Int) {}
-            override fun onXpUpdated(totalXp: Int) {}
-            override fun onRepLogged(repIndex: Int, timestampMs: Long, xpEarned: Int) {
+            override fun onXpUpdated(totalXp: Float) {}
+            override fun onRepLogged(repIndex: Int, timestampMs: Long, xpEarned: Float) {
                 when (ref.getExerciseType()) {
                     ExerciseType.PUSHUP -> {
                         val diff = repIndex - lastPush
@@ -88,31 +89,39 @@ fun WorkoutApp(repo: SessionRepository) {
                 appScope.launch {
                     val sessionXp = ref.getTotalXp()
                     val delta = sessionXp - sessionAddedXp
-                    if (delta > 0) {
+                    if (delta > 0f) {
                         sessionAddedXp = sessionXp
                         profileXp += delta
                         withContext(Dispatchers.IO) { repo.upsertProfile(profileXp) }
+                        val newProf = withContext(Dispatchers.IO) { repo.getProfile() }
                         val newLevel = LevelSystem.levelFromXp(profileXp)
                         val leveled = newLevel.level > levelInfo.level
                         if (leveled) showLevelUp = true
                         levelInfo = newLevel
-                        progressManager.updateGoals(newLevel, profileXp)
+                        progressManager.updateGoals(newLevel, profileXp, newProf)
                     }
                 }
             }
         })
         ref.addResetListener {
-            lastPush = 0; lastSquat = 0; lastBicepLeft = 0; lastBicepRight = 0; sessionAddedXp = 0
+            lastPush = 0; lastSquat = 0; lastBicepLeft = 0; lastBicepRight = 0; sessionAddedXp = 0f
         }
         ref
     }
 
+    var notionApiKey by remember { mutableStateOf("") }
+    var notionDbId by remember { mutableStateOf("") }
+
     LaunchedEffect(Unit) {
         val prof = withContext(Dispatchers.IO) { repo.getProfile() }
-        profileXp = prof?.totalXp ?: 0
+        profileXp = prof?.totalXp ?: 0f // Update totalXp to Float casted to Int or just handle it as Float? Wait, totalXp is Float now! Let's check profileXp
+        // Wait, profileXp is Int in the app code, let's keep it Int.
+        profileXp = (prof?.totalXp ?: 0f)
         profileName = prof?.name ?: ""
+        notionApiKey = prof?.notionApiKey ?: ""
+        notionDbId = prof?.notionDbId ?: ""
         levelInfo = LevelSystem.levelFromXp(profileXp)
-        progressManager.load(levelInfo, profileXp)
+        progressManager.load(levelInfo, profileXp, prof)
         startDestination = if (profileName.isBlank()) "onboarding" else "dashboard"
     }
 
@@ -133,6 +142,7 @@ fun WorkoutApp(repo: SessionRepository) {
     val showBottomBar = backStack?.destination?.route !in hideBottomBarRoutes
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0.dp),
         bottomBar = {
             if (showBottomBar) {
                 NavigationBar {
@@ -164,7 +174,9 @@ fun WorkoutApp(repo: SessionRepository) {
                     onStartWorkout = { nav.navigate("session") },
                     dailyState = dailyState,
                     levelInfo = levelInfo,
-                    userName = profileName
+                    userName = profileName,
+                    onNavigateToSettings = { nav.navigate("settings") },
+                    progressManager = progressManager
                 )
             }
             composable("workouts") { WorkoutsScreen(onStart = { type -> engine.setExerciseType(type); nav.navigate("session") }) }
@@ -172,34 +184,183 @@ fun WorkoutApp(repo: SessionRepository) {
                 ProfileScreen(
                     name = profileName, 
                     levelInfo = levelInfo, 
-                    xp = profileXp, 
+                    xp = profileXp.toInt(), 
                     dailyState = dailyState, 
                     repo = repo, 
-                    onNameChange = { new -> profileName = new; appScope.launch(Dispatchers.IO) { repo.updateName(new) } }
+                    onNameChange = { new -> profileName = new; appScope.launch(Dispatchers.IO) { repo.updateName(new) } },
+                    onViewHistory = { nav.navigate("history") }
                 ) 
             }
             composable("settings") {
+                var showManualDialog by remember { mutableStateOf(false) }
+                
                 SettingsScreen(
                     showLandmarks = showLandmarks,
+                    notionApiKey = notionApiKey,
+                    notionDbId = notionDbId,
                     onToggleLandmarks = { showLandmarks = it },
-                    onExport = {
+                    onExportJson = { uri ->
+                        appScope.launch(Dispatchers.IO) {
+                            try {
+                                val sessions = repo.getAllSessions()
+                                val jsonArray = org.json.JSONArray()
+                                sessions.forEach { s ->
+                                    val obj = org.json.JSONObject()
+                                    obj.put("id", s.id)
+                                    obj.put("timestampIso", s.timestampIso)
+                                    obj.put("exercise", s.exercise)
+                                    obj.put("reps", s.reps)
+                                    obj.put("durationSeconds", s.durationSeconds.toDouble())
+                                    obj.put("totalXp", s.totalXp.toDouble())
+                                    obj.put("syncedToNotion", s.syncedToNotion)
+                                    jsonArray.put(obj)
+                                }
+                                context.contentResolver.openOutputStream(uri)?.use { out ->
+                                    out.write(jsonArray.toString(2).toByteArray(Charsets.UTF_8))
+                                }
+                                withContext(Dispatchers.Main) {
+                                    android.widget.Toast.makeText(context, "Exported successfully", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    },
+                    onImportJson = { uri ->
+                        appScope.launch(Dispatchers.IO) {
+                            try {
+                                val jsonString = context.contentResolver.openInputStream(uri)?.use { 
+                                    it.readBytes().toString(Charsets.UTF_8)
+                                } ?: ""
+                                val jsonArray = org.json.JSONArray(jsonString)
+                                val existing = repo.getAllSessions()
+                                val existingMap = existing.associateBy { it.timestampIso }
+                                
+                                var imported = 0
+                                var skipped = 0
+                                var addedXp = 0f
+                                
+                                for (i in 0 until jsonArray.length()) {
+                                    val obj = jsonArray.getJSONObject(i)
+                                    val ts = obj.getString("timestampIso")
+                                    if (existingMap.containsKey(ts)) {
+                                        skipped++
+                                    } else {
+                                        val s = com.example.workouttracker.db.SessionEntity(
+                                            timestampIso = ts,
+                                            exercise = obj.getString("exercise"),
+                                            reps = obj.getInt("reps"),
+                                            durationSeconds = obj.getDouble("durationSeconds").toFloat(),
+                                            totalXp = obj.getDouble("totalXp").toFloat(),
+                                            syncedToNotion = obj.optBoolean("syncedToNotion", false)
+                                        )
+                                        repo.insertSession(s)
+                                        addedXp += s.totalXp
+                                        imported++
+                                    }
+                                }
+                                
+                                if (imported > 0) {
+                                    val currentProf = repo.getProfile()
+                                    val currentXp = currentProf?.totalXp ?: 0f
+                                    repo.upsertProfile(currentXp + addedXp)
+                                    progressManager.recalculateDailyProgress()
+                                    
+                                    withContext(Dispatchers.Main) {
+                                        val newProf = withContext(Dispatchers.IO) { repo.getProfile() }
+                                        profileXp = newProf?.totalXp ?: 0f
+                                        levelInfo = LevelSystem.levelFromXp(profileXp)
+                                        progressManager.load(levelInfo, profileXp, newProf)
+                                        android.widget.Toast.makeText(context, "Imported $imported workouts ($skipped skipped)", android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                } else {
+                                    withContext(Dispatchers.Main) {
+                                        android.widget.Toast.makeText(context, "No new workouts to import ($skipped skipped)", android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                withContext(Dispatchers.Main) {
+                                    android.widget.Toast.makeText(context, "Import failed: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    },
+                    onOpenManualEntry = { showManualDialog = true },
+                    onSaveNotionKeys = { key, db ->
+                        notionApiKey = key
+                        notionDbId = db
+                        appScope.launch(Dispatchers.IO) { repo.updateNotionKeys(key, db) }
+                    },
+                    onSyncNotion = { onShowDialog ->
+                        val syncManager = NotionSyncManager(repo)
                         appScope.launch {
-                            val sessions = withContext(Dispatchers.IO) { repo.getAllSessions() }
-                            val csvHeader = "ID,Timestamp,Exercise,Reps,Duration(s),XP\n"
-                            val csvBody = sessions.joinToString("\n") { 
-                                "${it.id},${it.timestampIso},${it.exercise},${it.reps},${it.durationSeconds},${it.totalXp}" 
+                            val result = syncManager.syncUnsyncedSessions(notionApiKey, notionDbId)
+                            if (result.isSuccess) {
+                                onShowDialog("Sync Successful", "Synced ${result.getOrNull()} sessions to Notion.")
+                            } else {
+                                onShowDialog("Sync Failed", "${result.exceptionOrNull()?.message}")
                             }
-                            val csvContent = csvHeader + csvBody
-                            
-                            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                type = "text/csv"
-                                putExtra(android.content.Intent.EXTRA_SUBJECT, "RepMind Workout Data")
-                                putExtra(android.content.Intent.EXTRA_TEXT, csvContent)
+                        }
+                    },
+                    onRetrieveNotion = { onShowDialog ->
+                        val syncManager = NotionSyncManager(repo)
+                        appScope.launch {
+                            val result = syncManager.retrieveAllSessions(notionApiKey, notionDbId)
+                            if (result.isSuccess) {
+                                val count = result.getOrNull() ?: 0
+                                progressManager.recalculateDailyProgress()
+                                val newProf = withContext(Dispatchers.IO) { repo.getProfile() }
+                                profileXp = newProf?.totalXp ?: 0f
+                                levelInfo = LevelSystem.levelFromXp(profileXp)
+                                progressManager.load(levelInfo, profileXp, newProf)
+                                onShowDialog("Retrieve Successful", "Retrieved $count sessions from Notion.")
+                            } else {
+                                onShowDialog("Retrieve Failed", "${result.exceptionOrNull()?.message}")
                             }
-                            context.startActivity(android.content.Intent.createChooser(intent, "Export Workouts"))
                         }
                     }
                 )
+                
+                if (showManualDialog) {
+                    ManualEntryDialog(
+                        onDismiss = { showManualDialog = false },
+                        onSave = { exercise, reps, durationMins, isCustom, isDurationBased ->
+                            showManualDialog = false
+                            val xpEarned = if (isCustom) {
+                                if (isDurationBased) LevelSystem.xpForManualDuration(durationMins) else LevelSystem.xpForManualReps(reps)
+                            } else {
+                                LevelSystem.xpForStandardExercise(exercise, reps)
+                            }
+                            
+                            appScope.launch(Dispatchers.IO) {
+                                val entity = com.example.workouttracker.db.SessionEntity(
+                                    timestampIso = java.time.OffsetDateTime.now().format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                                    exercise = exercise,
+                                    reps = reps,
+                                    durationSeconds = (durationMins * 60).toFloat(),
+                                    totalXp = xpEarned,
+                                    syncedToNotion = false
+                                )
+                                repo.insertSession(entity)
+                                val currentProf = repo.getProfile()
+                                val currentXp = currentProf?.totalXp ?: 0f
+                                repo.upsertProfile(currentXp + xpEarned)
+                                progressManager.recalculateDailyProgress()
+                                
+                                withContext(Dispatchers.Main) {
+                                    val newProf = withContext(Dispatchers.IO) { repo.getProfile() }
+                                    profileXp = newProf?.totalXp ?: 0f
+                                    levelInfo = LevelSystem.levelFromXp(profileXp)
+                                    progressManager.load(levelInfo, profileXp, newProf)
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+            composable("history") {
+                HistoryScreen(repo = repo, onBack = { nav.popBackStack() })
             }
             composable("session") {
                 WorkoutSessionScreen(
@@ -234,7 +395,8 @@ private fun OnboardingScreen(onContinue: (String) -> Unit) {
 
 @Composable
 private fun WorkoutsScreen(onStart: (ExerciseType) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).padding(top = 48.dp, bottom = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        MotivationCard()
         Text("Choose Workout", style = MaterialTheme.typography.titleLarge)
         
         Text("Essentials", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
@@ -263,8 +425,43 @@ private fun WorkoutCard(title: String, desc: String, type: ExerciseType, onStart
 }
 
 @Composable
-private fun SettingsScreen(showLandmarks: Boolean, onToggleLandmarks: (Boolean) -> Unit, onExport: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+private fun SettingsScreen(
+    showLandmarks: Boolean, 
+    notionApiKey: String,
+    notionDbId: String,
+    onToggleLandmarks: (Boolean) -> Unit, 
+    onExportJson: (android.net.Uri) -> Unit, 
+    onImportJson: (android.net.Uri) -> Unit,
+    onOpenManualEntry: () -> Unit,
+    onSaveNotionKeys: (String, String) -> Unit,
+    onSyncNotion: (onShowDialog: (String, String) -> Unit) -> Unit,
+    onRetrieveNotion: (onShowDialog: (String, String) -> Unit) -> Unit
+) {
+    var dialogTitle by remember { mutableStateOf<String?>(null) }
+    var dialogMessage by remember { mutableStateOf<String?>(null) }
+
+    if (dialogTitle != null && dialogMessage != null) {
+        AlertDialog(
+            onDismissRequest = { dialogTitle = null; dialogMessage = null },
+            confirmButton = { TextButton(onClick = { dialogTitle = null; dialogMessage = null }) { Text("OK") } },
+            title = { Text(dialogTitle!!) },
+            text = { Text(dialogMessage!!) }
+        )
+    }
+
+    val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        uri?.let { onExportJson(it) }
+    }
+    
+    val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { onImportJson(it) }
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp).padding(top = 48.dp, bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         
         Card(Modifier.fillMaxWidth()) {
@@ -282,13 +479,95 @@ private fun SettingsScreen(showLandmarks: Boolean, onToggleLandmarks: (Boolean) 
         }
         
         Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Notion Integration (Optional)", style = MaterialTheme.typography.titleMedium)
+                
+                val hasKeys = notionApiKey.isNotBlank() && notionDbId.isNotBlank()
+                var isEditingKeys by remember { mutableStateOf(!hasKeys) }
+
+                if (isEditingKeys) {
+                    var tempKey by remember { mutableStateOf(notionApiKey) }
+                    var tempDb by remember { mutableStateOf(notionDbId) }
+                    
+                    OutlinedTextField(
+                        value = tempKey, 
+                        onValueChange = { tempKey = it },
+                        label = { Text("Integration Token") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    OutlinedTextField(
+                        value = tempDb, 
+                        onValueChange = { tempDb = it },
+                        label = { Text("Database ID") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Button(onClick = { 
+                        onSaveNotionKeys(tempKey, tempDb) 
+                        isEditingKeys = false
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Save Keys")
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = "••••••••••••••••••••••••••••••", 
+                        onValueChange = { },
+                        label = { Text("Integration Token") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = false
+                    )
+                    
+                    OutlinedTextField(
+                        value = "••••••••••••••••••••••••••••••", 
+                        onValueChange = { },
+                        label = { Text("Database ID") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = false
+                    )
+
+                    Button(onClick = { isEditingKeys = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Edit Keys")
+                    }
+                }
+                
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onSyncNotion { title, msg -> dialogTitle = title; dialogMessage = msg } }, modifier = Modifier.weight(1f)) {
+                        Text("Sync to Notion")
+                    }
+                    Button(onClick = { onRetrieveNotion { title, msg -> dialogTitle = title; dialogMessage = msg } }, modifier = Modifier.weight(1f)) {
+                        Text("Retrieve")
+                    }
+                }
+            }
+        }
+        
+        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Data Management", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = onExport, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { exportLauncher.launch("RepMind_Backup.json") }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Share, null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Export Workout Data (CSV)")
+                    Text("Export Data (JSON)")
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Refresh, null) // Needs an icon like Refresh or Download
+                    Spacer(Modifier.width(8.dp))
+                    Text("Import Data (JSON)")
+                }
+            }
+        }
+        
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Manual Entry", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = onOpenManualEntry, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Add, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add Manual Workout Entry")
                 }
             }
         }
@@ -302,7 +581,8 @@ private fun ProfileScreen(
     xp: Int,
     dailyState: ProgressManager.DailyState?,
     repo: SessionRepository,
-    onNameChange: (String) -> Unit
+    onNameChange: (String) -> Unit,
+    onViewHistory: () -> Unit
 ) {
     var editing by remember { mutableStateOf(false) }
     var temp by remember { mutableStateOf(name) }
@@ -327,9 +607,9 @@ private fun ProfileScreen(
         val weekStart = today.minusDays(6).format(DateTimeFormatter.ISO_LOCAL_DATE)
         val monthStart = today.minusDays(29).format(DateTimeFormatter.ISO_LOCAL_DATE)
         
-        todayXp = withContext(Dispatchers.IO) { repo.getXpBetween(todayStr + "T00:00:00", todayStr + "T23:59:59") }
-        weekXp = withContext(Dispatchers.IO) { repo.getXpBetween(weekStart + "T00:00:00", todayStr + "T23:59:59") }
-        monthXp = withContext(Dispatchers.IO) { repo.getXpBetween(monthStart + "T00:00:00", todayStr + "T23:59:59") }
+        todayXp = withContext(Dispatchers.IO) { repo.getXpBetween(todayStr + "T00:00:00", todayStr + "T23:59:59").toInt() }
+        weekXp = withContext(Dispatchers.IO) { repo.getXpBetween(weekStart + "T00:00:00", todayStr + "T23:59:59").toInt() }
+        monthXp = withContext(Dispatchers.IO) { repo.getXpBetween(monthStart + "T00:00:00", todayStr + "T23:59:59").toInt() }
 
         // Process charts
         try {
@@ -358,7 +638,8 @@ private fun ProfileScreen(
         } catch (e: Exception) {}
     }
 
-    Column(Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp).padding(top = 48.dp, bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        MotivationCard()
         Text("Profile", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         
         // Name & Level
@@ -393,7 +674,8 @@ private fun ProfileScreen(
         Text("Calendar Streak", style = MaterialTheme.typography.titleMedium)
         Card(Modifier.fillMaxWidth()) {
             Box(Modifier.padding(16.dp)) {
-                CalendarView(activeDates)
+                val dayStatesMap = activeDates.associateWith { DayState.WORKOUT_DONE }
+                CalendarView(dayStatesMap, null, {})
             }
         }
         
@@ -406,9 +688,12 @@ private fun ProfileScreen(
              val name = com.example.workouttracker.Utils.capitalize(session.exercise.replace("_", " "))
              ListItem(
                 headlineContent = { Text(name, fontWeight = FontWeight.Bold) },
-                supportingContent = { Text("${session.reps} reps • ${session.totalXp} XP • ${session.timestampIso.take(10)}") }
+                supportingContent = { Text("${session.reps} reps • ${String.format(Locale.US, "%.2f", session.totalXp)} XP • ${session.timestampIso.take(10)}") }
             )
              Divider()
+        }
+        Button(onClick = onViewHistory, modifier = Modifier.fillMaxWidth()) {
+            Text("View Full History")
         }
     }
 }
@@ -420,6 +705,108 @@ fun XpStatCard(label: String, xp: Int, modifier: Modifier = Modifier) {
             Text(label, style = MaterialTheme.typography.labelSmall)
             Text("$xp", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
             Text("XP", style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+@Composable
+fun ManualEntryDialog(
+    onDismiss: () -> Unit,
+    onSave: (exercise: String, reps: Int, durationMins: Int, isCustom: Boolean, isDurationBased: Boolean) -> Unit
+) {
+    val isDark = androidx.compose.foundation.isSystemInDarkTheme() || MaterialTheme.colorScheme.background.red < 0.5f
+    val textColor = if (isDark) Color.White else Color.Black
+    
+    var exerciseType by remember { mutableStateOf("Pushups") }
+    var customName by remember { mutableStateOf("") }
+    var isDurationBased by remember { mutableStateOf(false) }
+    var repsInput by remember { mutableStateOf("") }
+    var durationIndex by remember { mutableStateOf(4) } // index for 10 mins
+    
+    val durationOptions = listOf(1, 2, 3, 5, 10, 15, 20, 30, 45, 60)
+    val standardTypes = listOf("Pushups", "Squats", "Lunges", "Bicep Curls", "Shoulder Press", "Jumping Jacks", "Other")
+    
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Card(Modifier.fillMaxWidth().padding(16.dp)) {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("Manual Entry", style = MaterialTheme.typography.headlineSmall, color = textColor, fontWeight = FontWeight.Bold)
+                
+                var expanded by remember { mutableStateOf(false) }
+                Box {
+                    OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(exerciseType, color = textColor)
+                    }
+                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                        standardTypes.forEach { type ->
+                            DropdownMenuItem(text = { Text(type) }, onClick = { exerciseType = type; expanded = false })
+                        }
+                    }
+                }
+                
+                val isCustom = exerciseType == "Other"
+                
+                if (isCustom) {
+                    OutlinedTextField(
+                        value = customName, 
+                        onValueChange = { customName = it }, 
+                        label = { Text("Workout Name") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Tracking Mode:", modifier = Modifier.weight(1f))
+                        TextButton(onClick = { isDurationBased = false }, colors = ButtonDefaults.textButtonColors(contentColor = if (!isDurationBased) MaterialTheme.colorScheme.primary else Color.Gray)) {
+                            Text("Reps")
+                        }
+                        TextButton(onClick = { isDurationBased = true }, colors = ButtonDefaults.textButtonColors(contentColor = if (isDurationBased) MaterialTheme.colorScheme.primary else Color.Gray)) {
+                            Text("Duration")
+                        }
+                    }
+                    
+                    if (isDurationBased) {
+                        Text("Duration (Minutes)", color = textColor, style = MaterialTheme.typography.labelMedium)
+                        var durationExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            OutlinedButton(onClick = { durationExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text("${durationOptions[durationIndex]} mins", color = textColor)
+                            }
+                            DropdownMenu(expanded = durationExpanded, onDismissRequest = { durationExpanded = false }) {
+                                durationOptions.forEachIndexed { index, mins ->
+                                    DropdownMenuItem(text = { Text("$mins mins") }, onClick = { durationIndex = index; durationExpanded = false })
+                                }
+                            }
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = repsInput, 
+                            onValueChange = { repsInput = it }, 
+                            label = { Text("Total Reps") },
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                        )
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = repsInput, 
+                        onValueChange = { repsInput = it }, 
+                        label = { Text("Reps") },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                    )
+                }
+                
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel", color = textColor.copy(alpha=0.7f)) }
+                    Button(onClick = {
+                        val finalName = if (isCustom) customName.ifBlank { "Custom Workout" } else exerciseType
+                        val finalReps = if (isCustom && isDurationBased) 0 else (repsInput.toIntOrNull() ?: 0)
+                        val finalDuration = if (isCustom && isDurationBased) durationOptions[durationIndex] else 0
+                        onSave(finalName, finalReps, finalDuration, isCustom, isDurationBased)
+                    }) {
+                        Text("Save")
+                    }
+                }
+            }
         }
     }
 }

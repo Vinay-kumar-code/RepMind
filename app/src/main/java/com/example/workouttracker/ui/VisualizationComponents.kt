@@ -22,7 +22,13 @@ import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import java.util.Locale
+
+enum class DayState {
+    NONE, WORKOUT_DONE, GOAL_MET
+}
 
 @Composable
 fun LineChart(
@@ -123,13 +129,15 @@ fun ContributionHeatMap(
 
 @Composable
 fun CalendarView(
-    activeDates: Set<String>, // Set of YYYY-MM-DD strings
+    dayStates: Map<String, DayState>,
+    selectedDate: String?,
+    onDateSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val today = LocalDate.now()
     val yearMonth = YearMonth.from(today)
     val daysInMonth = yearMonth.lengthOfMonth()
-    val firstDayOfWeek = yearMonth.atDay(1).dayOfWeek.value % 7 // 0=Sunday, 1=Monday... depending on locale, let's assume 0=Sun for grid
+    val firstDayOfWeek = yearMonth.atDay(1).dayOfWeek.value % 7 // 0=Sunday, 1=Monday...
     
     Column(modifier.fillMaxWidth()) {
         // Month Header
@@ -187,22 +195,34 @@ fun CalendarView(
                     val dayNum = row * 7 + col - firstDayOfWeek + 1
                     if (dayNum in 1..daysInMonth) {
                         val dateStr = LocalDate.of(today.year, today.month, dayNum).format(DateTimeFormatter.ISO_LOCAL_DATE)
-                        val isActive = activeDates.contains(dateStr)
+                        val state = dayStates[dateStr] ?: DayState.NONE
                         val isToday = dayNum == today.dayOfMonth
+                        val isSelected = dateStr == selectedDate
+                        
+                        val bgColor = when (state) {
+                            DayState.GOAL_MET -> MaterialTheme.colorScheme.primary
+                            DayState.WORKOUT_DONE -> MaterialTheme.colorScheme.tertiaryContainer
+                            DayState.NONE -> if (isToday) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
+                        }
+                        
+                        val textColor = when (state) {
+                            DayState.GOAL_MET -> MaterialTheme.colorScheme.onPrimary
+                            DayState.WORKOUT_DONE -> MaterialTheme.colorScheme.onTertiaryContainer
+                            DayState.NONE -> MaterialTheme.colorScheme.onSurface
+                        }
+                        
+                        val mod = Modifier.size(36.dp).background(color = bgColor, shape = CircleShape)
+                        val finalMod = if (isSelected) mod.border(2.dp, MaterialTheme.colorScheme.onSurface, CircleShape) else mod
                         
                         Box(
                             contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .size(32.dp)
-                                .background(
-                                    color = if (isActive) MaterialTheme.colorScheme.primary else if (isToday) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
-                                    shape = CircleShape
-                                )
+                            modifier = finalMod.clickable { onDateSelected(dateStr) }
                         ) {
                             Text(
                                 text = "$dayNum",
-                                color = if (isActive) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                                style = MaterialTheme.typography.bodySmall
+                                color = textColor,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Normal
                             )
                         }
                     } else {

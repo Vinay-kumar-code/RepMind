@@ -3,6 +3,7 @@ package com.example.workouttracker.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,6 +14,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -55,7 +59,7 @@ fun WorkoutSessionScreen(
     }
 
     var reps by remember { mutableStateOf(0) }
-    var xp by remember { mutableStateOf(0) }
+    var xp by remember { mutableStateOf(0f) }
     var sessionStartMs by remember { mutableStateOf(0L) }
     var isSessionActive by remember { mutableStateOf(false) }
     var exercise by remember { mutableStateOf(engine.getExerciseType()) }
@@ -65,9 +69,14 @@ fun WorkoutSessionScreen(
     // Live feedback
     var feedback by remember { mutableStateOf(engine.getLastFeedback()) }
     var lastReps by remember { mutableStateOf(0) }
+    var bestSet by remember { mutableStateOf(0) }
 
     var autoMode by remember { mutableStateOf(false) }
     var lastRepChangeTime by remember { mutableStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(exercise) {
+        bestSet = repo.getBestSetForExercise(exercise.name.lowercase())
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -94,7 +103,8 @@ fun WorkoutSessionScreen(
             if (autoMode && isSessionActive && reps > 0 && (System.currentTimeMillis() - lastRepChangeTime > 30000)) {
                 saveSession(repo, reps, xp, sessionStartMs, exercise)
                 engine.reset()
-                reps = 0; xp = 0; lastReps = 0; isSessionActive = false; sessionStartMs = 0L
+                reps = 0; xp = 0f; lastReps = 0; isSessionActive = false; sessionStartMs = 0L
+                bestSet = repo.getBestSetForExercise(exercise.name.lowercase())
             }
             
             reps = currentReps
@@ -107,180 +117,313 @@ fun WorkoutSessionScreen(
         onExerciseChange(newType)
         engine.reset()
         reps = 0
-        xp = 0
+        xp = 0f
         lastReps = 0
         isSessionActive = false
         sessionStartMs = 0L
     }
+    
+    val isDark = androidx.compose.foundation.isSystemInDarkTheme() || MaterialTheme.colorScheme.background.red < 0.5f
+    val textColor = if (isDark) Color.White else Color.Black
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        // 1. Camera Preview (Full Screen)
-        PreviewCameraView(
-            engine = engine,
-            modifier = Modifier.fillMaxSize(),
-            performanceSettings = performanceSettings,
-            showLandmarks = performanceSettings.showLandmarks
-        )
-
-        // 2. HUD Overlay
+    GlassBackground(Modifier.fillMaxSize()) {
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(top = 48.dp, bottom = 16.dp, start = 16.dp, end = 16.dp), // Adjust top padding for edge-to-edge
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Top Bar
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().padding(bottom = 16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = onBack,
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f))
+                // Back Button
+                GlassCard(modifier = Modifier.size(48.dp)) {
+                    IconButton(onClick = onBack, modifier = Modifier.fillMaxSize()) {
+                        Icon(Icons.Default.ArrowBack, "Back", tint = textColor)
+                    }
+                }
+
+                // Exercise Selector Button (Gradient Pill)
+                val gradientBrush = Brush.horizontalGradient(
+                    colors = listOf(Color(0xFFE94057), Color(0xFF8A2387))
+                )
+                Box(
+                    modifier = Modifier
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(gradientBrush)
+                        .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
                 ) {
-                    Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
-                }
-
-                // Exercise Selector Button
-                FilledTonalButton(
-                    onClick = { showExerciseSheet = true },
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
-                    )
-                ) {
-                    Text(exercise.name.replace("_", " "), style = MaterialTheme.typography.titleMedium)
-                    Icon(Icons.Default.ArrowDropDown, null)
-                }
-
-                IconButton(
-                    onClick = { showHistory = true },
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f))
-                ) {
-                    Icon(Icons.Default.History, "History", tint = Color.White)
-                }
-                
-                // Auto Mode Toggle
-                FilledTonalIconToggleButton(
-                    checked = autoMode,
-                    onCheckedChange = { autoMode = it },
-                    colors = IconButtonDefaults.filledTonalIconToggleButtonColors(
-                        containerColor = Color.Black.copy(alpha = 0.5f),
-                        checkedContainerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Text("A", fontWeight = FontWeight.Bold, color = if (autoMode) Color.Black else Color.White)
-                }
-            }
-
-            Spacer(Modifier.weight(1f))
-
-            // Center HUD: Rep Counter & Form Arc
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // Form Arc (Canvas)
-                val depth = feedback.depthPercent / 100f
-                val rangeOk = feedback.rangeOk
-                val color = if (rangeOk) Color.Green else Color.Yellow
-                
-                Canvas(modifier = Modifier.size(200.dp)) {
-                    drawArc(
-                        color = Color.White.copy(alpha = 0.3f),
-                        startAngle = 135f,
-                        sweepAngle = 270f,
-                        useCenter = false,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 20f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                    )
-                    drawArc(
-                        color = color,
-                        startAngle = 135f,
-                        sweepAngle = 270f * depth,
-                        useCenter = false,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 20f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                    )
-                }
-
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "$reps",
-                        style = MaterialTheme.typography.displayLarge.copy(
-                            fontSize = 80.sp,
-                            fontWeight = FontWeight.Bold,
+                    TextButton(onClick = { showExerciseSheet = true }) {
+                        Text(
+                            exercise.name.replace("_", " "), 
+                            style = MaterialTheme.typography.titleMedium,
                             color = Color.White
                         )
-                    )
-                    Text(
-                        text = "REPS",
-                        style = MaterialTheme.typography.labelLarge.copy(color = Color.White.copy(alpha = 0.8f))
-                    )
+                        Icon(Icons.Default.ArrowDropDown, null, tint = Color.White)
+                    }
                 }
-            }
-            
-            // Feedback Text
-            AnimatedVisibility(
-                visible = feedback.stage == "down" || !feedback.rangeOk,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            ) {
-                Surface(
-                    color = if (feedback.rangeOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.padding(top = 16.dp)
-                ) {
-                    Text(
-                        text = if (feedback.rangeOk) "Good Depth!" else "Go Deeper!",
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelLarge
-                    )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GlassCard(modifier = Modifier.size(48.dp)) {
+                        IconButton(onClick = { showHistory = true }, modifier = Modifier.fillMaxSize()) {
+                            Icon(Icons.Default.History, "History", tint = textColor)
+                        }
+                    }
+                    GlassCard(modifier = Modifier.size(48.dp)) {
+                        IconToggleButton(
+                            checked = autoMode,
+                            onCheckedChange = { autoMode = it },
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Text(
+                                "A", 
+                                fontWeight = FontWeight.Bold, 
+                                color = if (autoMode) MaterialTheme.colorScheme.primary else textColor
+                            )
+                        }
+                    }
                 }
             }
 
-            Spacer(Modifier.weight(1f))
+            // Camera Preview Area
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f) // Takes up available upper space
+                    .padding(bottom = 16.dp)
+                    .shadow(16.dp, RoundedCornerShape(24.dp))
+                    .clip(RoundedCornerShape(24.dp))
+                    .border(2.dp, Color(0xFF8A2387).copy(alpha = 0.5f), RoundedCornerShape(24.dp))
+            ) {
+                PreviewCameraView(
+                    engine = engine,
+                    modifier = Modifier.fillMaxSize(),
+                    performanceSettings = performanceSettings,
+                    showLandmarks = performanceSettings.showLandmarks
+                )
+                
+                // Top floating pills inside camera
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.4f),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Text("⛶ Frame your body", modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White, fontSize = 12.sp)
+                    }
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.4f),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Text("☀ Good lighting", modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White, fontSize = 12.sp)
+                    }
+                }
+
+                // Center HUD: Rep Counter & Form Arc inside camera
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    val depth = feedback.depthPercent / 100f
+                    val rangeOk = feedback.rangeOk
+                    val color = if (rangeOk) Color.Green else Color.Yellow
+                    
+                    Canvas(modifier = Modifier.size(200.dp)) {
+                        drawArc(
+                            color = Color.White.copy(alpha = 0.3f),
+                            startAngle = 135f,
+                            sweepAngle = 270f,
+                            useCenter = false,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 16f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                        )
+                        drawArc(
+                            color = color,
+                            startAngle = 135f,
+                            sweepAngle = 270f * depth,
+                            useCenter = false,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 16f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                        )
+                    }
+
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "$reps",
+                            style = MaterialTheme.typography.displayLarge.copy(
+                                fontSize = 72.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        )
+                        Text(
+                            text = "REPS",
+                            style = MaterialTheme.typography.labelLarge.copy(color = Color.White.copy(alpha = 0.8f))
+                        )
+                    }
+                }
+            }
+
+            // Middle section (Go Deeper & Subtitle)
+            val pillColor = if (feedback.rangeOk) Color(0xFF4CAF50) else Color(0xFF8A2387)
+            val pillText = if (feedback.rangeOk) "Good Depth!" else "Go Deeper!"
+            
+            Box(
+                modifier = Modifier
+                    .offset(y = (-36).dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Brush.horizontalGradient(listOf(pillColor.copy(alpha=0.8f), pillColor)))
+                    .padding(horizontal = 24.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = pillText,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+
+            Text(
+                "Push your limits. Become stronger.",
+                color = textColor.copy(alpha = 0.7f),
+                fontSize = 14.sp,
+                modifier = Modifier.offset(y = (-16).dp)
+            )
+
+            // Streak & Best Set Cards
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 32.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                GlassCard(modifier = Modifier.weight(1f).aspectRatio(1.2f)) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF2C1938),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("🔥", fontSize = 20.sp)
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text("Streak", color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("${dailyState?.streak ?: 0} days", color = textColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "Complete today's goals to build your streak.",
+                            color = textColor.copy(alpha = 0.6f),
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
+
+                GlassCard(modifier = Modifier.weight(1f).aspectRatio(1.2f)) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF2C1938),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("🏆", fontSize = 20.sp)
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text("Best Set", color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("$bestSet reps", color = Color(0xFFA259FF), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "You've got this!\nBeat your best.",
+                            color = textColor.copy(alpha = 0.6f),
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
+            }
 
             // Bottom Controls
             Row(
-                Modifier.fillMaxWidth().padding(bottom = 32.dp),
+                Modifier.fillMaxWidth().padding(bottom = 16.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Reset
-                IconButton(
-                    onClick = { engine.reset(); reps = 0; xp = 0; lastReps = 0; isSessionActive = false; sessionStartMs = 0L },
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Icon(Icons.Default.Refresh, "Reset")
+                GlassCard(modifier = Modifier.size(72.dp)) {
+                    Column(
+                        Modifier.fillMaxSize().padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        IconButton(
+                            onClick = { engine.reset(); reps = 0; xp = 0f; lastReps = 0; isSessionActive = false; sessionStartMs = 0L },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, "Reset", tint = textColor)
+                        }
+                        Text("Reset", color = textColor, fontSize = 10.sp)
+                    }
                 }
 
                 // Play/Pause/Save
-                FloatingActionButton(
-                    onClick = {
-                        if (!isSessionActive) {
-                            sessionStartMs = System.currentTimeMillis()
-                            isSessionActive = true
-                        } else if (reps > 0) {
-                            saveSession(repo, reps, xp, sessionStartMs, exercise)
-                            engine.reset()
-                            reps = 0; xp = 0; lastReps = 0; isSessionActive = false; sessionStartMs = 0L
-                        } else {
-                            isSessionActive = false // Pause? Or just stop empty session
-                        }
-                    },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(72.dp)
+                val playActionIcon = if (isSessionActive && reps > 0) Icons.Default.Save else if (isSessionActive) Icons.Default.Pause else Icons.Default.PlayArrow
+                
+                Box(
+                    modifier = Modifier
+                        .size(96.dp)
+                        .clip(RoundedCornerShape(32.dp))
+                        .background(Brush.verticalGradient(listOf(Color(0xFFE94057), Color(0xFF8A2387))))
+                        .border(1.dp, Color.White.copy(alpha=0.3f), RoundedCornerShape(32.dp)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = if (isSessionActive && reps > 0) Icons.Default.Save else if (isSessionActive) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = "Action",
-                        modifier = Modifier.size(32.dp)
-                    )
+                    IconButton(
+                        onClick = {
+                            if (!isSessionActive) {
+                                sessionStartMs = System.currentTimeMillis()
+                                isSessionActive = true
+                            } else if (reps > 0) {
+                                saveSession(repo, reps, xp, sessionStartMs, exercise)
+                                engine.reset()
+                                reps = 0; xp = 0f; lastReps = 0; isSessionActive = false; sessionStartMs = 0L
+                            } else {
+                                isSessionActive = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(playActionIcon, "Action", tint = Color.White, modifier = Modifier.size(48.dp))
+                    }
                 }
                 
-                // Stats Mini-View
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("XP", style = MaterialTheme.typography.labelSmall, color = Color.White)
-                    Text("$xp", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                // XP
+                GlassCard(modifier = Modifier.size(72.dp)) {
+                    Column(
+                        Modifier.fillMaxSize().padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text("XP", color = textColor.copy(alpha=0.7f), fontSize = 10.sp)
+                        Text(
+                            String.format(java.util.Locale.US, "%.2f", xp), 
+                            color = Color(0xFFFF7043), 
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
@@ -316,19 +459,16 @@ fun WorkoutSessionScreen(
 
         if (showHistory) {
             ModalBottomSheet(onDismissRequest = { showHistory = false }) {
-                HistoryScreen(repo = repo, onClose = { showHistory = false })
+                HistoryScreen(repo = repo, onBack = { showHistory = false })
             }
         }
     }
 }
 
-// Helper for capitalization
-// fun String.capitalize() = replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-
 private fun saveSession(
     repo: SessionRepository,
     reps: Int,
-    xp: Int,
+    xp: Float,
     sessionStartMs: Long,
     exercise: ExerciseType
 ) {

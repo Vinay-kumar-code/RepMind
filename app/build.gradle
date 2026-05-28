@@ -93,4 +93,7 @@ dependencies {
 
     // Navigation Compose for dashboard/workout navigation
     implementation 'androidx.navigation:navigation-compose:2.7.7'
+    
+    // OkHttp for Notion API
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }
