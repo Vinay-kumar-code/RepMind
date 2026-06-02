@@ -29,7 +29,8 @@ fun PreviewCameraView(
     engine: WorkoutEngine,
     modifier: Modifier = Modifier,
     performanceSettings: PerformanceSettings = PerformanceSettings(),
-    showLandmarks: Boolean = false
+    showLandmarks: Boolean = false,
+    cameraSelector: CameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -99,7 +100,7 @@ fun PreviewCameraView(
                     cameraProvider.unbindAll()
                     cameraProvider.bindToLifecycle(
                         lifecycleOwner,
-                        CameraSelector.DEFAULT_FRONT_CAMERA,
+                        cameraSelector,
                         preview,
                         imageAnalysis
                     )

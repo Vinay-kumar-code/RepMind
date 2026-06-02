@@ -16,7 +16,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
         fun onFrameFeedback(feedback: Feedback) {}
     }
 
-    enum class ExerciseType { PUSHUP, SQUAT, BICEP_LEFT, BICEP_RIGHT, LUNGES, SHOULDER_PRESS, JUMPING_JACKS }
+    enum class ExerciseType { PUSHUP, SQUAT, BICEP_LEFT, BICEP_RIGHT, LUNGES, SHOULDER_PRESS, JUMPING_JACKS, PULLUP }
 
     data class Feedback(
         val reps: Int,
@@ -69,6 +69,8 @@ class WorkoutEngine(private val listener: Listener? = null) {
     private var plankThresholdDeg = 15f // Deviation from straight line
     private var cobraThresholdDeg = 130f // Hip extension angle
     private var jumpingJackArmAngle = 150f // Shoulder abduction
+    private var pullupDownAngle = 150f
+    private var pullupUpAngle = 90f
 
     private val leftAngles = ArrayDeque<Float>()
     private val rightAngles = ArrayDeque<Float>()
@@ -115,6 +117,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
                 ExerciseType.LUNGES -> { minRepIntervalMs = 800L }
                 ExerciseType.SHOULDER_PRESS -> { minRepIntervalMs = 600L }
                 ExerciseType.JUMPING_JACKS -> { minRepIntervalMs = 500L }
+                ExerciseType.PULLUP -> { minRepIntervalMs = 800L }
             }
         }
     }
@@ -134,6 +137,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
                 ExerciseType.LUNGES -> processLunges(landmarks, nowIst)
                 ExerciseType.SHOULDER_PRESS -> processShoulderPress(landmarks, nowIst)
                 ExerciseType.JUMPING_JACKS -> processJumpingJacks(landmarks, nowIst)
+                ExerciseType.PULLUP -> processPullup(landmarks, nowIst)
             }
         } catch (_: Exception) {}
     }
@@ -389,6 +393,42 @@ class WorkoutEngine(private val listener: Listener? = null) {
         emitFeedback(if(handsUp) 180f else 0f, Float.NaN, ts)
     }
 
+    private fun processPullup(lm: List<FloatArray>, ts: Long) {
+        val lVis = visible(lm, LEFT_SHOULDER, LEFT_ELBOW, LEFT_WRIST)
+        val rVis = visible(lm, RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST)
+        if (!lVis && !rVis) { emitFeedback(Float.NaN, Float.NaN, ts); return }
+        
+        val lAngle = if (lVis) calculateAngle(lm[LEFT_SHOULDER], lm[LEFT_ELBOW], lm[LEFT_WRIST]) else Float.NaN
+        val rAngle = if (rVis) calculateAngle(lm[RIGHT_SHOULDER], lm[RIGHT_ELBOW], lm[RIGHT_WRIST]) else Float.NaN
+
+        pushAngle(leftAngles, lAngle)
+        pushAngle(rightAngles, rAngle)
+        
+        val smoothL = if (leftAngles.isEmpty()) Float.NaN else leftAngles.average().toFloat()
+        val smoothR = if (rightAngles.isEmpty()) Float.NaN else rightAngles.average().toFloat()
+        val avg = listOf(smoothL, smoothR).filter{!it.isNaN()}.average().toFloat()
+        
+        cycleMinAngle = min(cycleMinAngle, avg)
+        cycleMaxAngle = max(cycleMaxAngle, avg)
+        
+        // Ensure user is hanging (wrists above shoulders, since Y is down, smaller Y means above)
+        val wristsAboveShoulders = (lVis && lm[LEFT_WRIST][1] < lm[LEFT_SHOULDER][1]) || 
+                                   (rVis && lm[RIGHT_WRIST][1] < lm[RIGHT_SHOULDER][1])
+                                   
+        // "down" stage means they are hanging
+        if (wristsAboveShoulders && avg > pullupDownAngle && stage != "down") {
+            stage = "down"
+            cycleMinAngle = avg; cycleMaxAngle = avg
+        }
+        
+        if (avg < pullupUpAngle && stage == "down") {
+            if (ts - lastRepTime >= minRepIntervalMs) incrementReps(ts, LevelSystem.xpPerPullup())
+            stage = "up"
+        }
+        
+        emitFeedback(smoothL, smoothR, ts)
+    }
+
     private fun visible(lm: List<FloatArray>, a: Int, b: Int, c: Int): Boolean =
         lm[a][2] > VISIBILITY_THRESHOLD && lm[b][2] > VISIBILITY_THRESHOLD && lm[c][2] > VISIBILITY_THRESHOLD
 
@@ -413,6 +453,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
             ExerciseType.SQUAT, ExerciseType.LUNGES -> (((squatUpKneeAngle - avg) / (squatUpKneeAngle - squatDownKneeAngle).coerceAtLeast(1f) *100f).coerceIn(0f,100f)).toInt()
             ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT, ExerciseType.SHOULDER_PRESS -> (((curlUpAngle - avg) / (curlUpAngle - curlDownAngle).coerceAtLeast(1f) *100f).coerceIn(0f,100f)).toInt()
             ExerciseType.JUMPING_JACKS -> if (avg > 90) 100 else 0
+            ExerciseType.PULLUP -> (((pullupDownAngle - avg) / (pullupDownAngle - pullupUpAngle).coerceAtLeast(1f) *100f).coerceIn(0f,100f)).toInt()
             else -> 0
         }
         val amplitude = (cycleMaxAngle - cycleMinAngle).coerceAtLeast(0f)
@@ -422,6 +463,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
             ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT -> avg < curlDownAngle
             ExerciseType.SHOULDER_PRESS -> avg < shoulderPressDownAngle
             ExerciseType.JUMPING_JACKS -> avg > 150f
+            ExerciseType.PULLUP -> avg < pullupUpAngle
             else -> false
         }
         val repImminent = (stage=="down")
@@ -440,6 +482,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
                 ExerciseType.PUSHUP -> amplitude >= minPushAmplitudeDeg
                 ExerciseType.SQUAT, ExerciseType.LUNGES -> amplitude >= 15f
                 ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT, ExerciseType.SHOULDER_PRESS -> amplitude >= minCurlAmplitude
+                ExerciseType.PULLUP -> amplitude >= 30f
                 else -> true
             },
             exercise = exercise

@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.camera.core.CameraSelector
 import com.example.workouttracker.SoundManager
 import com.example.workouttracker.WorkoutEngine
 import com.example.workouttracker.WorkoutEngine.ExerciseType
@@ -86,8 +87,13 @@ fun WorkoutSessionScreen(
             
             // Sound Logic
             if (currentReps > lastReps) {
-                val isMilestone = (currentReps % 10 == 0)
-                if (isMilestone) soundManager.playMilestoneSound()
+                if (exercise == ExerciseType.PULLUP) {
+                    if (feedback.rangeOk) soundManager.playGoodFormSound()
+                    else soundManager.playBadFormSound()
+                } else {
+                    val isMilestone = (currentReps % 10 == 0)
+                    if (isMilestone) soundManager.playMilestoneSound()
+                }
                 lastRepChangeTime = System.currentTimeMillis()
                 
                 // Auto Start
@@ -199,12 +205,16 @@ fun WorkoutSessionScreen(
                     .clip(RoundedCornerShape(24.dp))
                     .border(2.dp, Color(0xFF8A2387).copy(alpha = 0.5f), RoundedCornerShape(24.dp))
             ) {
-                PreviewCameraView(
-                    engine = engine,
-                    modifier = Modifier.fillMaxSize(),
-                    performanceSettings = performanceSettings,
-                    showLandmarks = performanceSettings.showLandmarks
-                )
+                val camSelector = if (exercise == ExerciseType.PULLUP) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+                key(camSelector) {
+                    PreviewCameraView(
+                        engine = engine,
+                        modifier = Modifier.fillMaxSize(),
+                        performanceSettings = performanceSettings,
+                        showLandmarks = performanceSettings.showLandmarks,
+                        cameraSelector = camSelector
+                    )
+                }
                 
                 // Top floating pills inside camera
                 Row(
@@ -436,7 +446,7 @@ fun WorkoutSessionScreen(
                     
                     val categories = mapOf(
                         "Essentials" to listOf(ExerciseType.PUSHUP, ExerciseType.SQUAT, ExerciseType.LUNGES),
-                        "Arms & Core" to listOf(ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT, ExerciseType.SHOULDER_PRESS),
+                        "Arms & Core" to listOf(ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT, ExerciseType.SHOULDER_PRESS, ExerciseType.PULLUP),
                         "Flexibility & Cardio" to listOf(ExerciseType.JUMPING_JACKS)
                     )
                     

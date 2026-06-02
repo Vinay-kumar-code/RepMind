@@ -81,6 +81,7 @@ object LevelSystem {
     fun xpPerLunge() = 0.15f // Harder than squat
     fun xpPerShoulderPress() = 0.1f
     fun xpPerJumpingJack() = 0.05f // 20 jacks = 1 XP
+    fun xpPerPullup() = 0.2f // 5 pullups = 1 XP
 
     fun xpForStandardExercise(exercise: String, reps: Int): Float {
         val xpPerRep = when (exercise.uppercase()) {
@@ -90,6 +91,7 @@ object LevelSystem {
             "LUNGES", "LUNGE" -> xpPerLunge()
             "SHOULDER_PRESS", "SHOULDER PRESS" -> xpPerShoulderPress()
             "JUMPING_JACKS", "JUMPING JACKS" -> xpPerJumpingJack()
+            "PULLUPS", "PULLUP" -> xpPerPullup()
             else -> 0.1f // Default fallback
         }
         return reps * xpPerRep * 0.75f

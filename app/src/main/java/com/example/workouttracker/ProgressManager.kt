@@ -66,16 +66,35 @@ class ProgressManager(private val repo: SessionRepository, private val scope: Co
     }
 
     private suspend fun computeStreak(): Int {
-        val recents = repo.getRecentDaily(30)
+        val recents = repo.getRecentDaily(30).sortedByDescending { it.date }
         var streak = 0
         var expected = LocalDate.now()
+        var checkedToday = false
+
         for (dp in recents) {
             val d = LocalDate.parse(dp.date)
+            if (!checkedToday && d == expected) {
+                checkedToday = true
+                if (dp.goalsMet) {
+                    streak++
+                    expected = expected.minusDays(1)
+                } else {
+                    // Today not met yet, streak depends on yesterday
+                    expected = expected.minusDays(1)
+                }
+                continue
+            } else if (!checkedToday && d.isBefore(expected)) {
+                checkedToday = true
+                expected = expected.minusDays(1)
+            }
+
             if (d == expected) {
                 if (dp.goalsMet) {
                     streak++
                     expected = expected.minusDays(1)
                 } else break
+            } else if (d.isBefore(expected)) {
+                break
             }
         }
         return streak
@@ -192,12 +211,7 @@ class ProgressManager(private val repo: SessionRepository, private val scope: Co
         val dailyMap = mutableMapOf<String, DailyProgressEntity>()
         
         for (session in allSessions) {
-            val date = try {
-                val instant = try { java.time.OffsetDateTime.parse(session.timestampIso).toInstant() } catch (_: Exception) { java.time.Instant.parse(session.timestampIso) }
-                instant.atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()
-            } catch (e: Exception) {
-                java.time.LocalDate.now().toString()
-            }
+            val date = sessionDate(session.timestampIso)
             
             val dp = dailyMap[date] ?: DailyProgressEntity(
                 date = date,
@@ -231,9 +245,31 @@ class ProgressManager(private val repo: SessionRepository, private val scope: Co
             )
         }
         
-        for ((_, dp) in dailyMap) {
-            val updated = dp.copy(goalsMet = goalsMet(dp))
+        val sortedDates = dailyMap.keys.sorted()
+        var runningXp = 0f
+        
+        for (d in sortedDates) {
+            val dp = dailyMap[d]!!
+            // Calculate what the level was BEFORE this day's XP is fully applied, or after.
+            // Let's use runningXp to find the goals for this specific day.
+            val pastLevelInfo = LevelSystem.levelFromXp(runningXp)
+            val pastGoals = DailyGoals(pastLevelInfo.pushGoal, pastLevelInfo.squatGoal, 60)
+            
+            // Allow custom goals if set, we'll use current custom goals as fallback for past
+            val prof = repo.getProfile()
+            val effectiveGoals = if (prof?.useCustomGoals == true) {
+                DailyGoals(prof.customPushGoal, prof.customSquatGoal, prof.customBicepGoal)
+            } else pastGoals
+            
+            val met = dp.pushups >= effectiveGoals.push &&
+                      dp.squats >= effectiveGoals.squat &&
+                      (dp.bicepLeft + dp.bicepRight) >= effectiveGoals.bicep
+                      
+            val updated = dp.copy(goalsMet = met)
             repo.upsertDaily(updated)
+            
+            // Add today's XP to running total for next days
+            runningXp += allSessions.filter { sessionDate(it.timestampIso) == d }.sumOf { it.totalXp.toDouble() }.toFloat()
         }
         
         val date = today()
@@ -247,5 +283,13 @@ class ProgressManager(private val repo: SessionRepository, private val scope: Co
             lastUpdatedIso = java.time.Instant.now().toString()
         )
         publish(todayDp, level, totalXp, streak)
+    }
+    private fun sessionDate(iso: String): String {
+        return try {
+            val instant = try { java.time.OffsetDateTime.parse(iso).toInstant() } catch (_: Exception) { java.time.Instant.parse(iso) }
+            instant.atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()
+        } catch (e: Exception) {
+            java.time.LocalDate.now().toString()
+        }
     }
 }

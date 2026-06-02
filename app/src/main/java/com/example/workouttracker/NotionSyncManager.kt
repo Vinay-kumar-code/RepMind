@@ -35,7 +35,7 @@ class NotionSyncManager(private val repo: SessionRepository) {
                         put("Exercise", createRichTextProp(session.exercise))
                         put("Reps", createNumberProp(session.reps))
                         put("Duration", createNumberProp(session.durationSeconds))
-                        put("TotalXP", createNumberProp(session.totalXp))
+                        put("TotalXP", createNumberProp(Math.round(session.totalXp * 100.0) / 100.0))
                     })
                 }
 

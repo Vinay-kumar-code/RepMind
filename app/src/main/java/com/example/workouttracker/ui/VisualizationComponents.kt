@@ -24,6 +24,12 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.*
 import java.util.Locale
 
 enum class DayState {
@@ -135,18 +141,29 @@ fun CalendarView(
     modifier: Modifier = Modifier
 ) {
     val today = LocalDate.now()
-    val yearMonth = YearMonth.from(today)
-    val daysInMonth = yearMonth.lengthOfMonth()
-    val firstDayOfWeek = yearMonth.atDay(1).dayOfWeek.value % 7 // 0=Sunday, 1=Monday...
+    var viewingMonth by remember { mutableStateOf(YearMonth.from(today)) }
+    val daysInMonth = viewingMonth.lengthOfMonth()
+    val firstDayOfWeek = viewingMonth.atDay(1).dayOfWeek.value % 7 // 0=Sunday, 1=Monday...
     
     Column(modifier.fillMaxWidth()) {
         // Month Header
-        Text(
-            text = "${today.month.getDisplayName(TextStyle.FULL, Locale.getDefault())} ${today.year}",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = { viewingMonth = viewingMonth.minusMonths(1) }) {
+                Icon(Icons.Default.KeyboardArrowLeft, "Previous Month")
+            }
+            Text(
+                text = "${viewingMonth.month.getDisplayName(TextStyle.FULL, Locale.getDefault())} ${viewingMonth.year}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            IconButton(onClick = { viewingMonth = viewingMonth.plusMonths(1) }) {
+                Icon(Icons.Default.KeyboardArrowRight, "Next Month")
+            }
+        }
         
         // Days Header
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -194,9 +211,9 @@ fun CalendarView(
                 for (col in 0..6) {
                     val dayNum = row * 7 + col - firstDayOfWeek + 1
                     if (dayNum in 1..daysInMonth) {
-                        val dateStr = LocalDate.of(today.year, today.month, dayNum).format(DateTimeFormatter.ISO_LOCAL_DATE)
+                        val dateStr = LocalDate.of(viewingMonth.year, viewingMonth.month, dayNum).format(DateTimeFormatter.ISO_LOCAL_DATE)
                         val state = dayStates[dateStr] ?: DayState.NONE
-                        val isToday = dayNum == today.dayOfMonth
+                        val isToday = dayNum == today.dayOfMonth && viewingMonth.month == today.month && viewingMonth.year == today.year
                         val isSelected = dateStr == selectedDate
                         
                         val bgColor = when (state) {

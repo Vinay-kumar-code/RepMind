@@ -184,7 +184,7 @@ fun WorkoutApp(repo: SessionRepository) {
                 ProfileScreen(
                     name = profileName, 
                     levelInfo = levelInfo, 
-                    xp = profileXp.toInt(), 
+                    xp = profileXp, 
                     dailyState = dailyState, 
                     repo = repo, 
                     onNameChange = { new -> profileName = new; appScope.launch(Dispatchers.IO) { repo.updateName(new) } },
@@ -193,6 +193,28 @@ fun WorkoutApp(repo: SessionRepository) {
             }
             composable("settings") {
                 var showManualDialog by remember { mutableStateOf(false) }
+                var highestStreak by remember { mutableStateOf(0) }
+                
+                LaunchedEffect(Unit) {
+                    val allDaily = withContext(Dispatchers.IO) { repo.getRecentDaily(10000).sortedBy { it.date } }
+                    var maxS = 0
+                    var currentS = 0
+                    var lastDate: LocalDate? = null
+
+                    for (dp in allDaily) {
+                        if (dp.goalsMet) {
+                            val d = LocalDate.parse(dp.date)
+                            if (lastDate == null || d == lastDate.plusDays(1)) {
+                                currentS++
+                            } else if (d != lastDate) {
+                                currentS = 1
+                            }
+                            if (currentS > maxS) maxS = currentS
+                            lastDate = d
+                        }
+                    }
+                    highestStreak = maxS
+                }
                 
                 SettingsScreen(
                     showLandmarks = showLandmarks,
@@ -319,6 +341,16 @@ fun WorkoutApp(repo: SessionRepository) {
                                 onShowDialog("Retrieve Failed", "${result.exceptionOrNull()?.message}")
                             }
                         }
+                    },
+                    onShareProfile = {
+                        shareProfileStats(
+                            context = context,
+                            name = profileName.ifBlank { "Athlete" },
+                            xp = profileXp,
+                            levelInfo = levelInfo,
+                            highestStreak = highestStreak,
+                            currentStreak = dailyState?.streak ?: 0
+                        )
                     }
                 )
                 
@@ -435,7 +467,8 @@ private fun SettingsScreen(
     onOpenManualEntry: () -> Unit,
     onSaveNotionKeys: (String, String) -> Unit,
     onSyncNotion: (onShowDialog: (String, String) -> Unit) -> Unit,
-    onRetrieveNotion: (onShowDialog: (String, String) -> Unit) -> Unit
+    onRetrieveNotion: (onShowDialog: (String, String) -> Unit) -> Unit,
+    onShareProfile: () -> Unit
 ) {
     var dialogTitle by remember { mutableStateOf<String?>(null) }
     var dialogMessage by remember { mutableStateOf<String?>(null) }
@@ -571,6 +604,18 @@ private fun SettingsScreen(
                 }
             }
         }
+        
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Profile Sharing", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { onShareProfile() }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Share, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Share Profile Stats")
+                }
+            }
+        }
     }
 }
 
@@ -578,7 +623,7 @@ private fun SettingsScreen(
 private fun ProfileScreen(
     name: String,
     levelInfo: LevelSystem.LevelInfo,
-    xp: Int,
+    xp: Float,
     dailyState: ProgressManager.DailyState?,
     repo: SessionRepository,
     onNameChange: (String) -> Unit,
@@ -592,9 +637,9 @@ private fun ProfileScreen(
     var lineChartData by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
     var heatMapData by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     
-    var todayXp by remember { mutableStateOf(0) }
-    var weekXp by remember { mutableStateOf(0) }
-    var monthXp by remember { mutableStateOf(0) }
+    var todayXp by remember { mutableStateOf(0f) }
+    var weekXp by remember { mutableStateOf(0f) }
+    var monthXp by remember { mutableStateOf(0f) }
     var activeDates by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     LaunchedEffect(Unit) {
@@ -604,12 +649,28 @@ private fun ProfileScreen(
         // XP Stats
         val today = LocalDate.now()
         val todayStr = today.format(DateTimeFormatter.ISO_LOCAL_DATE)
-        val weekStart = today.minusDays(6).format(DateTimeFormatter.ISO_LOCAL_DATE)
-        val monthStart = today.minusDays(29).format(DateTimeFormatter.ISO_LOCAL_DATE)
+        val weekStart = today.minusDays(6)
+        val monthStart = today.minusDays(29)
+
+        fun parseDate(iso: String): LocalDate {
+            return try {
+                val instant = try { OffsetDateTime.parse(iso).toInstant() } catch (_: Exception) { Instant.parse(iso) }
+                instant.atZone(ZoneId.systemDefault()).toLocalDate()
+            } catch (e: Exception) { LocalDate.now() }
+        }
+
+        todayXp = all.filter { parseDate(it.timestampIso) == today }
+            .sumOf { Math.round(it.totalXp * 100.0) / 100.0 }.toFloat()
         
-        todayXp = withContext(Dispatchers.IO) { repo.getXpBetween(todayStr + "T00:00:00", todayStr + "T23:59:59").toInt() }
-        weekXp = withContext(Dispatchers.IO) { repo.getXpBetween(weekStart + "T00:00:00", todayStr + "T23:59:59").toInt() }
-        monthXp = withContext(Dispatchers.IO) { repo.getXpBetween(monthStart + "T00:00:00", todayStr + "T23:59:59").toInt() }
+        weekXp = all.filter { 
+            val d = parseDate(it.timestampIso)
+            d == today || d.isAfter(today.minusDays(7))
+        }.sumOf { Math.round(it.totalXp * 100.0) / 100.0 }.toFloat()
+        
+        monthXp = all.filter { 
+            val d = parseDate(it.timestampIso)
+            d == today || d.isAfter(today.minusDays(30))
+        }.sumOf { Math.round(it.totalXp * 100.0) / 100.0 }.toFloat()
 
         // Process charts
         try {
@@ -699,11 +760,11 @@ private fun ProfileScreen(
 }
 
 @Composable
-fun XpStatCard(label: String, xp: Int, modifier: Modifier = Modifier) {
+fun XpStatCard(label: String, xp: Float, modifier: Modifier = Modifier) {
     Card(modifier) {
         Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(label, style = MaterialTheme.typography.labelSmall)
-            Text("$xp", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+            Text(String.format(Locale.US, "%.2f", xp), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
             Text("XP", style = MaterialTheme.typography.labelSmall)
         }
     }
@@ -810,3 +871,85 @@ fun ManualEntryDialog(
         }
     }
 }
+
+private fun shareProfileStats(
+    context: android.content.Context,
+    name: String,
+    xp: Float,
+    levelInfo: LevelSystem.LevelInfo,
+    highestStreak: Int,
+    currentStreak: Int
+) {
+    val width = 800
+    val height = 800
+    val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    
+    // Gradient Background
+    val paint = android.graphics.Paint().apply { isAntiAlias = true }
+    val gradient = android.graphics.LinearGradient(
+        0f, 0f, width.toFloat(), height.toFloat(),
+        intArrayOf(android.graphics.Color.parseColor("#121212"), android.graphics.Color.parseColor("#2C2C2C")),
+        null, android.graphics.Shader.TileMode.CLAMP
+    )
+    paint.shader = gradient
+    canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+    paint.shader = null
+    
+    // Text Paint
+    paint.apply {
+        color = android.graphics.Color.WHITE
+        textAlign = android.graphics.Paint.Align.CENTER
+        textSize = 70f
+        typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+    }
+    
+    canvas.drawText("RepMind Profile", width / 2f, 120f, paint)
+    
+    paint.textSize = 50f
+    paint.color = android.graphics.Color.parseColor("#A259FF")
+    canvas.drawText(name, width / 2f, 220f, paint)
+    
+    paint.color = android.graphics.Color.WHITE
+    paint.textSize = 45f
+    paint.typeface = android.graphics.Typeface.DEFAULT
+    canvas.drawText("Level ${levelInfo.level} • ${levelInfo.rank}", width / 2f, 320f, paint)
+    
+    paint.color = android.graphics.Color.LTGRAY
+    paint.textSize = 40f
+    canvas.drawText("Total XP: ${String.format(java.util.Locale.US, "%.2f", xp)}", width / 2f, 420f, paint)
+    
+    // Draw Stats Box
+    paint.color = android.graphics.Color.parseColor("#333333")
+    canvas.drawRoundRect(100f, 500f, width - 100f, 700f, 30f, 30f, paint)
+    
+    paint.color = android.graphics.Color.WHITE
+    paint.textSize = 35f
+    canvas.drawText("Current Streak", width / 4f + 50f, 570f, paint)
+    canvas.drawText("Highest Streak", 3 * width / 4f - 50f, 570f, paint)
+    
+    paint.textSize = 60f
+    paint.color = android.graphics.Color.parseColor("#FFD700") // Gold
+    canvas.drawText("$currentStreak", width / 4f + 50f, 650f, paint)
+    canvas.drawText("$highestStreak", 3 * width / 4f - 50f, 650f, paint)
+    
+    try {
+        val cachePath = java.io.File(context.cacheDir, "images")
+        cachePath.mkdirs()
+        val file = java.io.File(cachePath, "profile_share.png")
+        val stream = java.io.FileOutputStream(file)
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+        stream.close()
+        
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "Share Profile"))
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+

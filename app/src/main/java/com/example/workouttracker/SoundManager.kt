@@ -9,6 +9,14 @@ class SoundManager {
     fun playRepSound() {
         toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
     }
+    
+    fun playGoodFormSound() {
+        toneGenerator.startTone(ToneGenerator.TONE_PROP_ACK, 100)
+    }
+
+    fun playBadFormSound() {
+        toneGenerator.startTone(ToneGenerator.TONE_SUP_ERROR, 200)
+    }
 
     fun playMilestoneSound() {
         toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 300)

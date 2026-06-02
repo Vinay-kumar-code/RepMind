@@ -20,6 +20,16 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.util.Locale
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import androidx.core.content.FileProvider
+import java.io.File
+import java.io.FileOutputStream
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.clickable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -115,7 +125,12 @@ fun HistoryScreen(repo: SessionRepository, onBack: () -> Unit) {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(filteredSessions) { session ->
                         val name = Utils.capitalize(session.exercise.replace("_", " "))
-                        Card(modifier = Modifier.fillMaxWidth()) {
+                        val context = LocalContext.current
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { shareSessionImage(context, session) }
+                        ) {
                             ListItem(
                                 headlineContent = { Text(name, fontWeight = FontWeight.Bold) },
                                 supportingContent = { 
@@ -131,5 +146,61 @@ fun HistoryScreen(repo: SessionRepository, onBack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+private fun shareSessionImage(context: Context, session: SessionEntity) {
+    val width = 800
+    val height = 600
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    
+    canvas.drawColor(android.graphics.Color.parseColor("#121212"))
+    
+    val paint = Paint().apply {
+        color = android.graphics.Color.WHITE
+        textSize = 80f
+        isAntiAlias = true
+        textAlign = Paint.Align.CENTER
+    }
+    
+    val name = com.example.workouttracker.Utils.capitalize(session.exercise.replace("_", " "))
+    canvas.drawText("RepMind", width / 2f, 120f, paint)
+    
+    paint.textSize = 60f
+    paint.color = android.graphics.Color.parseColor("#A259FF")
+    canvas.drawText(name, width / 2f, 250f, paint)
+    
+    paint.color = android.graphics.Color.WHITE
+    paint.textSize = 50f
+    canvas.drawText("${session.reps} Reps", width / 2f, 350f, paint)
+    
+    paint.textSize = 40f
+    paint.color = android.graphics.Color.LTGRAY
+    if (session.durationSeconds > 0) {
+        canvas.drawText("Duration: ${(session.durationSeconds / 60).toInt()} mins", width / 2f, 430f, paint)
+    }
+    canvas.drawText("XP Earned: ${String.format(Locale.US, "%.2f", session.totalXp)}", width / 2f, 490f, paint)
+    
+    paint.textSize = 30f
+    canvas.drawText(session.timestampIso.take(10), width / 2f, 560f, paint)
+    
+    try {
+        val cachePath = File(context.cacheDir, "images")
+        cachePath.mkdirs()
+        val file = File(cachePath, "workout_share.png")
+        val stream = FileOutputStream(file)
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+        stream.close()
+        
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Share Workout"))
+    } catch (e: Exception) {
+        e.printStackTrace()
     }
 }
