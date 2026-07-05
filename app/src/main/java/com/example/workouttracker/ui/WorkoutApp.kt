@@ -785,7 +785,7 @@ fun ManualEntryDialog(
     var durationIndex by remember { mutableStateOf(4) } // index for 10 mins
     
     val durationOptions = listOf(1, 2, 3, 5, 10, 15, 20, 30, 45, 60)
-    val standardTypes = listOf("Pushups", "Squats", "Lunges", "Bicep Curls", "Shoulder Press", "Jumping Jacks", "Other")
+    val standardTypes = listOf("Pushups", "Squats", "Lunges", "Bicep Curl - Left", "Bicep Curl - Right", "Shoulder Press", "Jumping Jacks", "Pullups", "Other")
     
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Card(Modifier.fillMaxWidth().padding(16.dp)) {

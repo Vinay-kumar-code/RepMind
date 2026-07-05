@@ -71,6 +71,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
     private var jumpingJackArmAngle = 150f // Shoulder abduction
     private var pullupDownAngle = 150f
     private var pullupUpAngle = 90f
+    private var pullupBottomShoulderY = 0f
 
     private val leftAngles = ArrayDeque<Float>()
     private val rightAngles = ArrayDeque<Float>()
@@ -419,10 +420,20 @@ class WorkoutEngine(private val listener: Listener? = null) {
         if (wristsAboveShoulders && avg > pullupDownAngle && stage != "down") {
             stage = "down"
             cycleMinAngle = avg; cycleMaxAngle = avg
+            val lShoulderY = if (lVis) lm[LEFT_SHOULDER][1] else Float.NaN
+            val rShoulderY = if (rVis) lm[RIGHT_SHOULDER][1] else Float.NaN
+            pullupBottomShoulderY = listOf(lShoulderY, rShoulderY).filter { !it.isNaN() }.average().toFloat()
         }
         
         if (avg < pullupUpAngle && stage == "down") {
-            if (ts - lastRepTime >= minRepIntervalMs) incrementReps(ts, LevelSystem.xpPerPullup())
+            val lShoulderY = if (lVis) lm[LEFT_SHOULDER][1] else Float.NaN
+            val rShoulderY = if (rVis) lm[RIGHT_SHOULDER][1] else Float.NaN
+            val currentShoulderY = listOf(lShoulderY, rShoulderY).filter { !it.isNaN() }.average().toFloat()
+            val shoulderMovedUp = (pullupBottomShoulderY - currentShoulderY) > 0.05f
+            
+            if (ts - lastRepTime >= minRepIntervalMs && shoulderMovedUp) {
+                incrementReps(ts, LevelSystem.xpPerPullup())
+            }
             stage = "up"
         }
         

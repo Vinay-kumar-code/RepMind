@@ -68,48 +68,60 @@ class NotionSyncManager(private val repo: SessionRepository) {
         if (apiKey.isBlank() || dbId.isBlank()) return@withContext Result.failure(Exception("API Key or Database ID is empty"))
 
         try {
-            val request = Request.Builder()
-                .url("https://api.notion.com/v1/databases/$dbId/query")
-                .addHeader("Authorization", "Bearer $apiKey")
-                .addHeader("Notion-Version", "2022-06-28")
-                .post("{}".toRequestBody(jsonMediaType))
-                .build()
+            var hasMore = true
+            var nextCursor: String? = null
+            val fetchedSessions = mutableListOf<SessionEntity>()
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext Result.failure(IOException("Failed to retrieve from Notion: ${response.code}"))
-
-                val responseBody = response.body?.string() ?: return@withContext Result.failure(Exception("Empty response"))
-                val json = JSONObject(responseBody)
-                val results = json.getJSONArray("results")
-                
-                val fetchedSessions = mutableListOf<SessionEntity>()
-                
-                for (i in 0 until results.length()) {
-                    val page = results.getJSONObject(i)
-                    val properties = page.optJSONObject("properties") ?: continue
-                    
-                    val sessionId = getNumberProp(properties, "SessionID")?.toLong() ?: 0L
-                    val timestamp = getDateProp(properties, "Timestamp") ?: ""
-                    val exercise = getRichTextProp(properties, "Exercise") ?: "Unknown"
-                    val reps = getNumberProp(properties, "Reps")?.toInt() ?: 0
-                    val duration = getNumberProp(properties, "Duration")?.toFloat() ?: 0f
-                    val xp = getNumberProp(properties, "TotalXP")?.toFloat() ?: 0f
-                    
-                    if (sessionId > 0 && timestamp.isNotEmpty()) {
-                        fetchedSessions.add(
-                            SessionEntity(
-                                id = sessionId,
-                                timestampIso = timestamp,
-                                exercise = exercise,
-                                reps = reps,
-                                durationSeconds = duration,
-                                totalXp = xp,
-                                syncedToNotion = true
-                            )
-                        )
-                    }
+            while (hasMore) {
+                val jsonBody = JSONObject()
+                if (nextCursor != null) {
+                    jsonBody.put("start_cursor", nextCursor)
                 }
                 
+                val request = Request.Builder()
+                    .url("https://api.notion.com/v1/databases/$dbId/query")
+                    .addHeader("Authorization", "Bearer $apiKey")
+                    .addHeader("Notion-Version", "2022-06-28")
+                    .post(jsonBody.toString().toRequestBody(jsonMediaType))
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext Result.failure(IOException("Failed to retrieve from Notion: ${response.code}"))
+
+                    val responseBody = response.body?.string() ?: return@withContext Result.failure(Exception("Empty response"))
+                    val json = JSONObject(responseBody)
+                    val results = json.getJSONArray("results")
+                    
+                    hasMore = json.optBoolean("has_more", false)
+                    nextCursor = json.optString("next_cursor", null)
+                    
+                    for (i in 0 until results.length()) {
+                        val page = results.getJSONObject(i)
+                        val properties = page.optJSONObject("properties") ?: continue
+                        
+                        val sessionId = getNumberProp(properties, "SessionID")?.toLong() ?: 0L
+                        val timestamp = getDateProp(properties, "Timestamp") ?: ""
+                        val exercise = getRichTextProp(properties, "Exercise") ?: "Unknown"
+                        val reps = getNumberProp(properties, "Reps")?.toInt() ?: 0
+                        val duration = getNumberProp(properties, "Duration")?.toFloat() ?: 0f
+                        val xp = getNumberProp(properties, "TotalXP")?.toFloat() ?: 0f
+                        
+                        if (sessionId > 0 && timestamp.isNotEmpty()) {
+                            fetchedSessions.add(
+                                SessionEntity(
+                                    id = sessionId,
+                                    timestampIso = timestamp,
+                                    exercise = exercise,
+                                    reps = reps,
+                                    durationSeconds = duration,
+                                    totalXp = xp,
+                                    syncedToNotion = true
+                                )
+                            )
+                        }
+                    }
+                }
+            }    
                 if (fetchedSessions.isNotEmpty()) {
                     repo.resetAllProgress()
                     repo.insertAllSessions(fetchedSessions)
@@ -121,7 +133,6 @@ class NotionSyncManager(private val repo: SessionRepository) {
                 }
                 
                 Result.success(fetchedSessions.size)
-            }
         } catch (e: Exception) {
             Result.failure(e)
         }

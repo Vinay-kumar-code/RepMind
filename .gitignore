@@ -61,3 +61,8 @@ captures/
 
 # Google Services
 google-services.json
+
+# Keystore and signing files
+*.jks
+*.keystore
+keystore.properties

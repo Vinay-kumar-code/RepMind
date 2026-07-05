@@ -233,8 +233,8 @@ class ProgressManager(private val repo: SessionRepository, private val scope: Co
             when (ex) {
                 "pushup", "pushups" -> push += session.reps
                 "squat", "squats" -> squat += session.reps
-                "bicep_left" -> bLeft += session.reps
-                "bicep_right" -> bRight += session.reps
+                "bicep_left", "bicep curl - left", "bicep curls" -> bLeft += session.reps
+                "bicep_right", "bicep curl - right" -> bRight += session.reps
             }
             
             dailyMap[date] = dp.copy(

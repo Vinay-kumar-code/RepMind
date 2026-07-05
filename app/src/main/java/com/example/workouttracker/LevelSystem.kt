@@ -87,11 +87,11 @@ object LevelSystem {
         val xpPerRep = when (exercise.uppercase()) {
             "PUSHUPS", "PUSHUP" -> xpPerPushup()
             "SQUATS", "SQUAT" -> xpPerSquat()
-            "BICEP_LEFT", "BICEP_RIGHT", "BICEP CURLS" -> xpPerBicepCurl()
-            "LUNGES", "LUNGE" -> xpPerLunge()
+            "BICEP CURL - LEFT", "BICEP CURL - RIGHT" -> xpPerBicepCurl()
+            "PULLUPS", "PULLUP" -> xpPerPullup()
             "SHOULDER_PRESS", "SHOULDER PRESS" -> xpPerShoulderPress()
             "JUMPING_JACKS", "JUMPING JACKS" -> xpPerJumpingJack()
-            "PULLUPS", "PULLUP" -> xpPerPullup()
+            "LUNGES", "LUNGE" -> xpPerLunge()
             else -> 0.1f // Default fallback
         }
         return reps * xpPerRep * 0.75f
