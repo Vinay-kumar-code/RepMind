@@ -38,13 +38,15 @@ private data class BottomDest(val route: String, val label: String, val icon: Im
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WorkoutApp(repo: SessionRepository) {
+fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     val nav = rememberNavController()
     val appScope = remember { CoroutineScope(Dispatchers.Main) }
     val context = LocalContext.current
 
     val progressManager = remember { ProgressManager(repo, appScope) }
     val dailyState by progressManager.dailyState.collectAsState()
+    val themeMode by themePrefs.themeMode.collectAsState()
+    val useMaterialYou by themePrefs.useMaterialYou.collectAsState()
 
     var profileXp by remember { mutableStateOf(0f) }
     var levelInfo by remember { mutableStateOf(LevelSystem.levelFromXp(0f)) }
@@ -54,6 +56,53 @@ fun WorkoutApp(repo: SessionRepository) {
 
     // Settings State
     var showLandmarks by remember { mutableStateOf(false) } // Default: Don't show
+
+    // Health Connect
+    val healthConnectManager = remember { HealthConnectManager(context, repo) }
+    var hcConnected by remember { mutableStateOf(false) }
+    var hcStepsToday by remember { mutableStateOf(0L) }
+    val hcPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { grantedMap ->
+        val granted = grantedMap.filter { it.value }.keys
+        if (granted.containsAll(healthConnectManager.permissions)) {
+            hcConnected = true
+            appScope.launch(Dispatchers.IO) {
+                hcStepsToday = healthConnectManager.getTodaySteps()
+                healthConnectManager.syncFromHealthConnect()
+                
+                // Refresh profile after sync
+                val newProf = repo.getProfile()
+                withContext(Dispatchers.Main) {
+                    profileXp = newProf?.totalXp ?: 0f
+                    levelInfo = LevelSystem.levelFromXp(profileXp)
+                    progressManager.recalculateDailyProgress()
+                    progressManager.load(levelInfo, profileXp, newProf)
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val currentProf = withContext(Dispatchers.IO) { repo.getProfile() }
+        profileXp = currentProf?.totalXp ?: 0f
+        levelInfo = LevelSystem.levelFromXp(profileXp)
+        profileName = currentProf?.name ?: ""
+        progressManager.load(levelInfo, profileXp, currentProf)
+        
+        if (healthConnectManager.isSupported) {
+            hcConnected = healthConnectManager.hasPermissions()
+            if (hcConnected) {
+                hcStepsToday = healthConnectManager.getTodaySteps()
+                healthConnectManager.syncFromHealthConnect()
+                val notionApiKey = currentProf?.notionApiKey ?: ""
+                val notionDbId = currentProf?.notionDbId ?: ""
+                if (notionApiKey.isNotEmpty() && notionDbId.isNotEmpty()) {
+                    NotionSyncManager(repo).syncUnsyncedSessions(notionApiKey, notionDbId)
+                }
+            }
+        }
+    }
 
     // Rep tracking variables lifted outside listener so both listener and reset callback can access
     val engine = remember {
@@ -184,9 +233,10 @@ fun WorkoutApp(repo: SessionRepository) {
                 ProfileScreen(
                     name = profileName, 
                     levelInfo = levelInfo, 
-                    xp = profileXp, 
-                    dailyState = dailyState, 
                     repo = repo, 
+                    todaySteps = hcStepsToday,
+                    isHealthConnectAvailable = healthConnectManager.isSupported,
+                    isHealthConnectConnected = hcConnected,
                     onNameChange = { new -> profileName = new; appScope.launch(Dispatchers.IO) { repo.updateName(new) } },
                     onViewHistory = { nav.navigate("history") }
                 ) 
@@ -218,6 +268,35 @@ fun WorkoutApp(repo: SessionRepository) {
                 
                 SettingsScreen(
                     showLandmarks = showLandmarks,
+                    themeMode = themeMode,
+                    useMaterialYou = useMaterialYou,
+                    isHealthConnectAvailable = healthConnectManager.isSupported,
+                    isHealthConnectConnected = hcConnected,
+                    onConnectHealthConnect = { hcPermissionLauncher.launch(healthConnectManager.permissions.toTypedArray()) },
+                    onSyncToHealthConnect = { showDialog -> 
+                        appScope.launch(Dispatchers.IO) {
+                            val res = healthConnectManager.syncToHealthConnect()
+                            withContext(Dispatchers.Main) {
+                                if (res.isSuccess) showDialog("Export Success", "Exported ${res.getOrNull()} sessions to Health Connect.")
+                                else showDialog("Export Failed", res.exceptionOrNull()?.message ?: "Unknown error")
+                            }
+                        }
+                    },
+                    onSyncFromHealthConnect = { showDialog ->
+                        appScope.launch(Dispatchers.IO) {
+                            healthConnectManager.syncFromHealthConnect()
+                            val newProf = repo.getProfile()
+                            withContext(Dispatchers.Main) {
+                                profileXp = newProf?.totalXp ?: 0f
+                                levelInfo = LevelSystem.levelFromXp(profileXp)
+                                progressManager.recalculateDailyProgress()
+                                progressManager.load(levelInfo, profileXp, newProf)
+                                showDialog("Import Success", "Successfully imported recent sessions from Health Connect.")
+                            }
+                        }
+                    },
+                    onThemeModeChange = { themePrefs.setThemeMode(it) },
+                    onUseMaterialYouChange = { themePrefs.setUseMaterialYou(it) },
                     notionApiKey = notionApiKey,
                     notionDbId = notionDbId,
                     onToggleLandmarks = { showLandmarks = it },
@@ -357,7 +436,7 @@ fun WorkoutApp(repo: SessionRepository) {
                 if (showManualDialog) {
                     ManualEntryDialog(
                         onDismiss = { showManualDialog = false },
-                        onSave = { exercise, reps, durationMins, isCustom, isDurationBased ->
+                        onSave = { exercise, reps, durationMins, isCustom, isDurationBased, dateMs ->
                             showManualDialog = false
                             val xpEarned = if (isCustom) {
                                 if (isDurationBased) LevelSystem.xpForManualDuration(durationMins) else LevelSystem.xpForManualReps(reps)
@@ -366,13 +445,18 @@ fun WorkoutApp(repo: SessionRepository) {
                             }
                             
                             appScope.launch(Dispatchers.IO) {
+                                val isoTime = dateMs?.let { 
+                                    java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME) 
+                                } ?: java.time.OffsetDateTime.now().format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                                
                                 val entity = com.example.workouttracker.db.SessionEntity(
-                                    timestampIso = java.time.OffsetDateTime.now().format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                                    timestampIso = isoTime,
                                     exercise = exercise,
                                     reps = reps,
                                     durationSeconds = (durationMins * 60).toFloat(),
                                     totalXp = xpEarned,
-                                    syncedToNotion = false
+                                    syncedToNotion = false,
+                                    isManual = true
                                 )
                                 repo.insertSession(entity)
                                 val currentProf = repo.getProfile()
@@ -400,7 +484,6 @@ fun WorkoutApp(repo: SessionRepository) {
                     onBack = { nav.popBackStack() },
                     engine = engine,
                     performanceSettings = PerformanceSettings(showLandmarks = showLandmarks),
-                    levelInfo = levelInfo,
                     dailyState = dailyState,
                     onExerciseChange = { engine.setExerciseType(it) }
                 )
@@ -440,6 +523,7 @@ private fun WorkoutsScreen(onStart: (ExerciseType) -> Unit) {
         WorkoutCard("Bicep Curl - Left", "Isolate left arm", ExerciseType.BICEP_LEFT, onStart)
         WorkoutCard("Bicep Curl - Right", "Isolate right arm", ExerciseType.BICEP_RIGHT, onStart)
         WorkoutCard("Shoulder Press", "Overhead strength", ExerciseType.SHOULDER_PRESS, onStart)
+        WorkoutCard("Pullups", "Back and biceps", ExerciseType.PULLUP, onStart)
         
         Text("Cardio", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         WorkoutCard("Jumping Jacks", "Full body cardio", ExerciseType.JUMPING_JACKS, onStart)
@@ -459,6 +543,15 @@ private fun WorkoutCard(title: String, desc: String, type: ExerciseType, onStart
 @Composable
 private fun SettingsScreen(
     showLandmarks: Boolean, 
+    themeMode: Int,
+    useMaterialYou: Boolean,
+    isHealthConnectAvailable: Boolean,
+    isHealthConnectConnected: Boolean,
+    onConnectHealthConnect: () -> Unit,
+    onSyncToHealthConnect: (onShowDialog: (String, String) -> Unit) -> Unit,
+    onSyncFromHealthConnect: (onShowDialog: (String, String) -> Unit) -> Unit,
+    onThemeModeChange: (Int) -> Unit,
+    onUseMaterialYouChange: (Boolean) -> Unit,
     notionApiKey: String,
     notionDbId: String,
     onToggleLandmarks: (Boolean) -> Unit, 
@@ -507,6 +600,65 @@ private fun SettingsScreen(
                         Text("Overlay skeleton on camera feed. Disable for cleaner view.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = showLandmarks, onCheckedChange = onToggleLandmarks)
+                }
+            }
+        }
+        
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Appearance", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                Text("Theme Mode", style = MaterialTheme.typography.bodyLarge)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = themeMode == 0, onClick = { onThemeModeChange(0) })
+                        Text("System")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = themeMode == 1, onClick = { onThemeModeChange(1) })
+                        Text("Light")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = themeMode == 2, onClick = { onThemeModeChange(2) })
+                        Text("Dark")
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Material You", style = MaterialTheme.typography.bodyLarge)
+                        Text("Use system dynamic colors", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = useMaterialYou, onCheckedChange = onUseMaterialYouChange)
+                }
+            }
+        }
+        
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Health Connect Integration", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(16.dp))
+                if (!isHealthConnectAvailable) {
+                    Text("Health Connect is not available on this device.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                } else if (isHealthConnectConnected) {
+                    Text("Connected to Health Connect ✓", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(16.dp))
+                    Button(onClick = { onSyncToHealthConnect { title, msg -> dialogTitle = title; dialogMessage = msg } }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(androidx.compose.material.icons.Icons.Default.ArrowUpward, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Export to Health Connect")
+                    }
+                    OutlinedButton(onClick = { onSyncFromHealthConnect { title, msg -> dialogTitle = title; dialogMessage = msg } }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(androidx.compose.material.icons.Icons.Default.ArrowDownward, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Import from Health Connect")
+                    }
+                } else {
+                    Button(onClick = onConnectHealthConnect, modifier = Modifier.fillMaxWidth()) {
+                        Icon(androidx.compose.material.icons.Icons.Default.Favorite, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Connect Health Connect")
+                    }
                 }
             }
         }
@@ -616,6 +768,12 @@ private fun SettingsScreen(
                 }
             }
         }
+        
+        Spacer(Modifier.height(32.dp))
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Track Mate V4", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Orchestrated By Vinay Kumar with love ❤️", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -623,9 +781,10 @@ private fun SettingsScreen(
 private fun ProfileScreen(
     name: String,
     levelInfo: LevelSystem.LevelInfo,
-    xp: Float,
-    dailyState: ProgressManager.DailyState?,
     repo: SessionRepository,
+    todaySteps: Long,
+    isHealthConnectAvailable: Boolean,
+    isHealthConnectConnected: Boolean,
     onNameChange: (String) -> Unit,
     onViewHistory: () -> Unit
 ) {
@@ -648,9 +807,7 @@ private fun ProfileScreen(
         
         // XP Stats
         val today = LocalDate.now()
-        val todayStr = today.format(DateTimeFormatter.ISO_LOCAL_DATE)
-        val weekStart = today.minusDays(6)
-        val monthStart = today.minusDays(29)
+
 
         fun parseDate(iso: String): LocalDate {
             return try {
@@ -731,6 +888,15 @@ private fun ProfileScreen(
             XpStatCard("30 Days", monthXp, Modifier.weight(1f))
         }
 
+        if (isHealthConnectAvailable && isHealthConnectConnected) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Today's Steps", style = MaterialTheme.typography.titleMedium)
+                    Text("$todaySteps", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+
         // Visualizations
         Text("Calendar Streak", style = MaterialTheme.typography.titleMedium)
         Card(Modifier.fillMaxWidth()) {
@@ -770,10 +936,11 @@ fun XpStatCard(label: String, xp: Float, modifier: Modifier = Modifier) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManualEntryDialog(
     onDismiss: () -> Unit,
-    onSave: (exercise: String, reps: Int, durationMins: Int, isCustom: Boolean, isDurationBased: Boolean) -> Unit
+    onSave: (exercise: String, reps: Int, durationMins: Int, isCustom: Boolean, isDurationBased: Boolean, dateMs: Long?) -> Unit
 ) {
     val isDark = androidx.compose.foundation.isSystemInDarkTheme() || MaterialTheme.colorScheme.background.red < 0.5f
     val textColor = if (isDark) Color.White else Color.Black
@@ -802,6 +969,33 @@ fun ManualEntryDialog(
                             DropdownMenuItem(text = { Text(type) }, onClick = { exerciseType = type; expanded = false })
                         }
                     }
+                }
+                
+                var showDatePicker by remember { mutableStateOf(false) }
+                var selectedDateMs by remember { mutableStateOf<Long?>(null) }
+                val datePickerState = rememberDatePickerState()
+                
+                if (showDatePicker) {
+                    DatePickerDialog(
+                        onDismissRequest = { showDatePicker = false },
+                        confirmButton = {
+                            TextButton(onClick = { 
+                                selectedDateMs = datePickerState.selectedDateMillis 
+                                showDatePicker = false 
+                            }) { Text("OK") }
+                        }
+                    ) {
+                        DatePicker(state = datePickerState)
+                    }
+                }
+                
+                val dateText = selectedDateMs?.let { 
+                    java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()
+                } ?: "Today"
+                OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.DateRange, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(dateText, color = textColor)
                 }
                 
                 val isCustom = exerciseType == "Other"
@@ -862,7 +1056,7 @@ fun ManualEntryDialog(
                         val finalName = if (isCustom) customName.ifBlank { "Custom Workout" } else exerciseType
                         val finalReps = if (isCustom && isDurationBased) 0 else (repsInput.toIntOrNull() ?: 0)
                         val finalDuration = if (isCustom && isDurationBased) durationOptions[durationIndex] else 0
-                        onSave(finalName, finalReps, finalDuration, isCustom, isDurationBased)
+                        onSave(finalName, finalReps, finalDuration, isCustom, isDurationBased, selectedDateMs)
                     }) {
                         Text("Save")
                     }

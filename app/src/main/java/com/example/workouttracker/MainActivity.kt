@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val repo = remember { SessionRepository(db.sessionDao()) }
-                    WorkoutApp(repo = repo)
+                    WorkoutApp(repo = repo, themePrefs = themePrefs)
                 }
             }
         }

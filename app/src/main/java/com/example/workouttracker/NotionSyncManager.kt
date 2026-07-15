@@ -36,6 +36,7 @@ class NotionSyncManager(private val repo: SessionRepository) {
                         put("Reps", createNumberProp(session.reps))
                         put("Duration", createNumberProp(session.durationSeconds))
                         put("TotalXP", createNumberProp(Math.round(session.totalXp * 100.0) / 100.0))
+                        put("Is Manual", createCheckboxProp(session.isManual))
                     })
                 }
 
@@ -93,7 +94,7 @@ class NotionSyncManager(private val repo: SessionRepository) {
                     val results = json.getJSONArray("results")
                     
                     hasMore = json.optBoolean("has_more", false)
-                    nextCursor = json.optString("next_cursor", null)
+                    nextCursor = json.optString("next_cursor", "").takeIf { it.isNotEmpty() }
                     
                     for (i in 0 until results.length()) {
                         val page = results.getJSONObject(i)
@@ -105,6 +106,7 @@ class NotionSyncManager(private val repo: SessionRepository) {
                         val reps = getNumberProp(properties, "Reps")?.toInt() ?: 0
                         val duration = getNumberProp(properties, "Duration")?.toFloat() ?: 0f
                         val xp = getNumberProp(properties, "TotalXP")?.toFloat() ?: 0f
+                        val isManual = getCheckboxProp(properties, "Is Manual")
                         
                         if (sessionId > 0 && timestamp.isNotEmpty()) {
                             fetchedSessions.add(
@@ -115,7 +117,8 @@ class NotionSyncManager(private val repo: SessionRepository) {
                                     reps = reps,
                                     durationSeconds = duration,
                                     totalXp = xp,
-                                    syncedToNotion = true
+                                    syncedToNotion = true,
+                                    isManual = isManual
                                 )
                             )
                         }
@@ -182,5 +185,13 @@ class NotionSyncManager(private val repo: SessionRepository) {
             return array.optJSONObject(0)?.optJSONObject("text")?.optString("content")
         }
         return null
+    }
+
+    private fun createCheckboxProp(checked: Boolean): JSONObject {
+        return JSONObject().apply { put("checkbox", checked) }
+    }
+
+    private fun getCheckboxProp(properties: JSONObject, name: String): Boolean {
+        return properties.optJSONObject(name)?.optBoolean("checkbox", false) ?: false
     }
 }

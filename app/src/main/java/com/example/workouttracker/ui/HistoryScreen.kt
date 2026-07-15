@@ -5,6 +5,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -127,17 +130,27 @@ fun HistoryScreen(repo: SessionRepository, onBack: () -> Unit) {
                         val name = Utils.capitalize(session.exercise.replace("_", " "))
                         val context = LocalContext.current
                         Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { shareSessionImage(context, session) }
+                            modifier = Modifier.fillMaxWidth().clickable { shareSessionImage(context, session) }
                         ) {
                             ListItem(
+                                leadingContent = {
+                                    if (session.isManual) {
+                                        Icon(Icons.Default.Edit, contentDescription = "Manual Entry", tint = MaterialTheme.colorScheme.secondary)
+                                    } else {
+                                        Icon(Icons.Default.CheckCircle, contentDescription = "App Tracked", tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                },
                                 headlineContent = { Text(name, fontWeight = FontWeight.Bold) },
                                 supportingContent = { 
                                     if (session.durationSeconds > 0) {
                                         Text("${(session.durationSeconds / 60).toInt()} mins • ${String.format(Locale.US, "%.2f", session.totalXp)} XP • ${session.timestampIso.take(16).replace("T", " ")}")
                                     } else {
                                         Text("${session.reps} reps • ${String.format(Locale.US, "%.2f", session.totalXp)} XP • ${session.timestampIso.take(16).replace("T", " ")}")
+                                    }
+                                },
+                                trailingContent = {
+                                    IconButton(onClick = { shareSessionImage(context, session) }) {
+                                        Icon(Icons.Default.Share, contentDescription = "Share")
                                     }
                                 }
                             )

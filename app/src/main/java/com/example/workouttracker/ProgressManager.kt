@@ -66,7 +66,7 @@ class ProgressManager(private val repo: SessionRepository, private val scope: Co
     }
 
     private suspend fun computeStreak(): Int {
-        val recents = repo.getRecentDaily(30).sortedByDescending { it.date }
+        val recents = repo.getRecentDaily(3650).sortedByDescending { it.date }
         var streak = 0
         var expected = LocalDate.now()
         var checkedToday = false

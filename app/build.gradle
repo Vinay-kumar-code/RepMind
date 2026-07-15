@@ -9,7 +9,7 @@ android {
     compileSdk 34
 
     defaultConfig {
-        // Changed applicationId for branding rename to Track Mate. Package namespaces in source remain to avoid large refactor.
+        // Restored original applicationId to ensure app updates seamlessly
         applicationId "com.trackmate.v2"
         minSdk 26
         targetSdk 34
@@ -96,4 +96,7 @@ dependencies {
     
     // OkHttp for Notion API
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    
+    // Health Connect
+    implementation 'androidx.health.connect:connect-client:1.1.0-alpha07'
 }

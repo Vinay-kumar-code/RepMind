@@ -44,7 +44,6 @@ fun WorkoutSessionScreen(
     onBack: () -> Unit,
     engine: WorkoutEngine,
     performanceSettings: PerformanceSettings,
-    levelInfo: LevelSystem.LevelInfo,
     dailyState: ProgressManager.DailyState?,
     onExerciseChange: (ExerciseType) -> Unit
 ) {

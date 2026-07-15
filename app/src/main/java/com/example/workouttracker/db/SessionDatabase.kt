@@ -14,7 +14,9 @@ data class SessionEntity(
     val reps: Int,
     val durationSeconds: Float,
     val totalXp: Float,
-    val syncedToNotion: Boolean = false
+    val syncedToNotion: Boolean = false,
+    val isManual: Boolean = false,
+    val syncedToHealthConnect: Boolean = false
 )
 
 @Entity(tableName = "daily_progress")
@@ -55,6 +57,12 @@ interface SessionDao {
 
     @Query("UPDATE sessions SET syncedToNotion = 1 WHERE id IN (:ids)")
     suspend fun markSessionsSynced(ids: List<Long>)
+
+    @Query("SELECT * FROM sessions WHERE syncedToHealthConnect = 0 AND isManual = 0")
+    suspend fun getUnsyncedToHealthConnect(): List<SessionEntity>
+
+    @Query("UPDATE sessions SET syncedToHealthConnect = 1 WHERE id IN (:ids)")
+    suspend fun markSessionsSyncedToHealthConnect(ids: List<Long>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(sessions: List<SessionEntity>)
@@ -106,7 +114,7 @@ interface SessionDao {
 
 @Database(
     entities = [SessionEntity::class, DailyProgressEntity::class, UserProfileEntity::class],
-    version = 7,
+    version = 9,
     exportSchema = false
 )
 abstract class SessionDatabase : RoomDatabase() {
@@ -130,7 +138,6 @@ abstract class SessionDatabase : RoomDatabase() {
 
         private val MIGRATION_3_4 = object : Migration(3,4) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Add name column if missing
                 db.execSQL("ALTER TABLE user_profile ADD COLUMN name TEXT NOT NULL DEFAULT ''")
             }
         }
@@ -144,13 +151,11 @@ abstract class SessionDatabase : RoomDatabase() {
 
         private val MIGRATION_5_6 = object : Migration(5,6) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Migrate sessions totalXp to REAL
                 db.execSQL("CREATE TABLE sessions_new (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, timestampIso TEXT NOT NULL, exercise TEXT NOT NULL, reps INTEGER NOT NULL, durationSeconds REAL NOT NULL, totalXp REAL NOT NULL)")
                 db.execSQL("INSERT INTO sessions_new (id, timestampIso, exercise, reps, durationSeconds, totalXp) SELECT id, timestampIso, exercise, reps, durationSeconds, CAST(totalXp AS REAL) FROM sessions")
                 db.execSQL("DROP TABLE sessions")
                 db.execSQL("ALTER TABLE sessions_new RENAME TO sessions")
 
-                // Migrate user_profile totalXp to REAL and add custom goal columns
                 db.execSQL("CREATE TABLE user_profile_new (id INTEGER PRIMARY KEY NOT NULL, totalXp REAL NOT NULL DEFAULT 0.0, name TEXT NOT NULL DEFAULT '', useCustomGoals INTEGER NOT NULL DEFAULT 0, customPushGoal INTEGER NOT NULL DEFAULT 10, customSquatGoal INTEGER NOT NULL DEFAULT 10, customBicepGoal INTEGER NOT NULL DEFAULT 60)")
                 db.execSQL("INSERT INTO user_profile_new (id, totalXp, name) SELECT id, CAST(totalXp AS REAL), name FROM user_profile")
                 db.execSQL("DROP TABLE user_profile")
@@ -166,13 +171,25 @@ abstract class SessionDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_7_8 = object : Migration(7,8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN isManual INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        private val MIGRATION_8_9 = object : Migration(8,9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN syncedToHealthConnect INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: Context): SessionDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     SessionDatabase::class.java,
                     "session_database"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build()
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9).build()
                 INSTANCE = instance
                 instance
             }

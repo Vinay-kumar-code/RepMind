@@ -11,6 +11,10 @@ class SessionRepository(private val dao: SessionDao) {
     suspend fun getUnsyncedSessions(): List<SessionEntity> = dao.getUnsyncedSessions()
     
     suspend fun markSessionsSynced(ids: List<Long>) = dao.markSessionsSynced(ids)
+
+    suspend fun getUnsyncedToHealthConnect(): List<SessionEntity> = dao.getUnsyncedToHealthConnect()
+
+    suspend fun markSessionsSyncedToHealthConnect(ids: List<Long>) = dao.markSessionsSyncedToHealthConnect(ids)
     
     suspend fun insertAllSessions(sessions: List<SessionEntity>) = dao.insertAll(sessions)
     
