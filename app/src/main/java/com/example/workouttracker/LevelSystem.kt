@@ -75,33 +75,38 @@ object LevelSystem {
         )
     }
 
-    fun xpPerPushup() = 0.1f // 10 pushups = 1 XP
-    fun xpPerSquat() = 0.1f   // 10 squats = 1 XP
-    fun xpPerBicepCurl() = 1f / 30f // 30 curls (one arm) = 1 XP
-    fun xpPerLunge() = 0.15f // Harder than squat
-    fun xpPerShoulderPress() = 0.1f
-    fun xpPerJumpingJack() = 0.05f // 20 jacks = 1 XP
-    fun xpPerPullup() = 0.2f // 5 pullups = 1 XP
+    fun xpPerPushup(rates: XpRates? = null) = rates?.pushup ?: 0.1f // 10 pushups = 1 XP
+    fun xpPerSquat(rates: XpRates? = null) = rates?.squat ?: 0.1f   // 10 squats = 1 XP
+    fun xpPerBicepCurl(rates: XpRates? = null) = rates?.bicepCurl ?: (1f / 30f) // 30 curls (one arm) = 1 XP
+    fun xpPerLunge(rates: XpRates? = null) = rates?.lunge ?: 0.15f // Harder than squat
+    fun xpPerShoulderPress(rates: XpRates? = null) = rates?.shoulderPress ?: 0.1f
+    fun xpPerJumpingJack(rates: XpRates? = null) = rates?.jumpingJack ?: 0.05f // 20 jacks = 1 XP
+    fun xpPerPullup(rates: XpRates? = null) = rates?.pullup ?: 0.2f // 5 pullups = 1 XP
 
-    fun xpForStandardExercise(exercise: String, reps: Int): Float {
+    fun xpForStandardExercise(exercise: String, reps: Int, rates: XpRates? = null): Float {
         val xpPerRep = when (exercise.uppercase()) {
-            "PUSHUPS", "PUSHUP" -> xpPerPushup()
-            "SQUATS", "SQUAT" -> xpPerSquat()
-            "BICEP CURL - LEFT", "BICEP CURL - RIGHT" -> xpPerBicepCurl()
-            "PULLUPS", "PULLUP" -> xpPerPullup()
-            "SHOULDER_PRESS", "SHOULDER PRESS" -> xpPerShoulderPress()
-            "JUMPING_JACKS", "JUMPING JACKS" -> xpPerJumpingJack()
-            "LUNGES", "LUNGE" -> xpPerLunge()
-            else -> 0.1f // Default fallback
+            "PUSHUPS", "PUSHUP" -> xpPerPushup(rates)
+            "SQUATS", "SQUAT" -> xpPerSquat(rates)
+            "BICEP CURL - LEFT", "BICEP CURL - RIGHT", "BICEP_LEFT", "BICEP_RIGHT" -> xpPerBicepCurl(rates)
+            "PULLUPS", "PULLUP" -> xpPerPullup(rates)
+            "SHOULDER_PRESS", "SHOULDER PRESS" -> xpPerShoulderPress(rates)
+            "JUMPING_JACKS", "JUMPING JACKS" -> xpPerJumpingJack(rates)
+            "LUNGES", "LUNGE" -> xpPerLunge(rates)
+            else -> rates?.manualRep ?: 0.1f // Default fallback
         }
-        return reps * xpPerRep * 0.75f
+        val mult = rates?.multiplier ?: 1.0f
+        return reps * xpPerRep * 0.75f * mult
     }
 
-    fun xpForManualReps(reps: Int): Float {
-        return (reps / 10f) * 0.75f
+    fun xpForManualReps(reps: Int, rates: XpRates? = null): Float {
+        val rate = rates?.manualRep ?: 0.075f
+        val mult = rates?.multiplier ?: 1.0f
+        return reps * rate * mult
     }
 
-    fun xpForManualDuration(minutes: Int): Float {
-        return (minutes / 5f) * 0.75f
+    fun xpForManualDuration(minutes: Int, rates: XpRates? = null): Float {
+        val rate = rates?.manualDurationPerMin ?: 0.15f
+        val mult = rates?.multiplier ?: 1.0f
+        return minutes * rate * mult
     }
 }

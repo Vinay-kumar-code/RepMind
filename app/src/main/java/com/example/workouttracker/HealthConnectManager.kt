@@ -19,8 +19,11 @@ import java.time.temporal.ChronoUnit
 
 class HealthConnectManager(private val context: Context, private val repo: SessionRepository) {
 
+    val sdkStatus: Int
+        get() = HealthConnectClient.getSdkStatus(context)
+
     val isSupported: Boolean
-        get() = HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE
+        get() = sdkStatus == HealthConnectClient.SDK_AVAILABLE
 
     fun getClient(): HealthConnectClient? {
         return if (isSupported) HealthConnectClient.getOrCreate(context) else null
@@ -36,8 +39,13 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
 
     suspend fun hasPermissions(): Boolean {
         val client = getClient() ?: return false
-        val granted = client.permissionController.getGrantedPermissions()
-        return granted.containsAll(permissions)
+        return try {
+            val granted = client.permissionController.getGrantedPermissions()
+            granted.containsAll(permissions)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
 
     suspend fun getTodaySteps(): Long = withContext(Dispatchers.IO) {
@@ -63,8 +71,8 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
         }
     }
 
-    suspend fun syncFromHealthConnect() = withContext(Dispatchers.IO) {
-        val client = getClient() ?: return@withContext
+    suspend fun syncFromHealthConnect(rates: XpRates? = null): Result<Int> = withContext(Dispatchers.IO) {
+        val client = getClient() ?: return@withContext Result.failure(Exception("Health Connect not available"))
         try {
             val start = ZonedDateTime.now().minusDays(7).toInstant()
             val end = Instant.now()
@@ -76,6 +84,7 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                 )
             )
             
+            var importedCount = 0
             for (record in response.records) {
                 val isoTime = record.startTime.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
                 
@@ -108,7 +117,7 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                     }
                     
                     val finalReps = if (stepsDuringWorkout > 0) stepsDuringWorkout.toInt() else 0
-                    val xpEarned = if (finalReps > 0) LevelSystem.xpForManualReps(finalReps) else LevelSystem.xpForManualDuration(durationMins)
+                    val xpEarned = if (finalReps > 0) LevelSystem.xpForManualReps(finalReps, rates) else LevelSystem.xpForManualDuration(durationMins, rates)
                     
                     val entity = SessionEntity(
                         timestampIso = isoTime,
@@ -120,14 +129,17 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                         isManual = true
                     )
                     repo.insertSession(entity)
+                    importedCount++
                     
                     val currentProf = repo.getProfile()
                     val currentXp = currentProf?.totalXp ?: 0f
                     repo.upsertProfile(currentXp + xpEarned)
                 }
             }
+            Result.success(importedCount)
         } catch (e: Exception) {
             e.printStackTrace()
+            Result.failure(e)
         }
     }
 

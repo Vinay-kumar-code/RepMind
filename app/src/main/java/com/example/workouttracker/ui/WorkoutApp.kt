@@ -1,10 +1,18 @@
 package com.example.workouttracker.ui
 
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -15,23 +23,32 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import androidx.health.connect.client.PermissionController
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.workouttracker.R
 import com.example.workouttracker.*
 import com.example.workouttracker.WorkoutEngine.ExerciseType
+import com.example.workouttracker.db.SessionEntity
 import com.example.workouttracker.db.SessionRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.time.*
-import java.time.format.DateTimeFormatter
-import java.time.format.TextStyle
 import java.util.Locale
 
 private data class BottomDest(val route: String, val label: String, val icon: ImageVector)
@@ -42,34 +59,44 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     val nav = rememberNavController()
     val appScope = remember { CoroutineScope(Dispatchers.Main) }
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     val progressManager = remember { ProgressManager(repo, appScope) }
+    val manualWorkoutPrefs = remember { ManualWorkoutPreferences(context) }
+    val xpPrefs = remember { XpPreferences(context) }
+    
     val dailyState by progressManager.dailyState.collectAsState()
     val themeMode by themePrefs.themeMode.collectAsState()
     val useMaterialYou by themePrefs.useMaterialYou.collectAsState()
+    val xpRates by xpPrefs.rates.collectAsState()
 
     var profileXp by remember { mutableStateOf(0f) }
     var levelInfo by remember { mutableStateOf(LevelSystem.levelFromXp(0f)) }
     var showLevelUp by remember { mutableStateOf(false) }
     var profileName by remember { mutableStateOf("") }
     var startDestination by remember { mutableStateOf<String?>(null) }
+    
+    var useCustomGoals by remember { mutableStateOf(false) }
+    var customPushGoal by remember { mutableStateOf(10) }
+    var customSquatGoal by remember { mutableStateOf(10) }
+    var customBicepGoal by remember { mutableStateOf(60) }
 
     // Settings State
-    var showLandmarks by remember { mutableStateOf(false) } // Default: Don't show
+    var showLandmarks by remember { mutableStateOf(false) }
 
     // Health Connect
     val healthConnectManager = remember { HealthConnectManager(context, repo) }
     var hcConnected by remember { mutableStateOf(false) }
     var hcStepsToday by remember { mutableStateOf(0L) }
-    val hcPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
-    ) { grantedMap ->
-        val granted = grantedMap.filter { it.value }.keys
+
+    val hcPermissionLauncher = rememberLauncherForActivityResult(
+        PermissionController.createRequestPermissionResultContract()
+    ) { granted ->
         if (granted.containsAll(healthConnectManager.permissions)) {
             hcConnected = true
             appScope.launch(Dispatchers.IO) {
                 hcStepsToday = healthConnectManager.getTodaySteps()
-                healthConnectManager.syncFromHealthConnect()
+                healthConnectManager.syncFromHealthConnect(xpRates)
                 
                 // Refresh profile after sync
                 val newProf = repo.getProfile()
@@ -83,18 +110,46 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
         }
     }
 
+    // Auto refresh Health Connect permissions on app resume
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (healthConnectManager.isSupported) {
+                    appScope.launch(Dispatchers.IO) {
+                        val hasPerms = healthConnectManager.hasPermissions()
+                        val steps = if (hasPerms) healthConnectManager.getTodaySteps() else 0L
+                        withContext(Dispatchers.Main) {
+                            hcConnected = hasPerms
+                            if (hasPerms) {
+                                hcStepsToday = steps
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     LaunchedEffect(Unit) {
         val currentProf = withContext(Dispatchers.IO) { repo.getProfile() }
         profileXp = currentProf?.totalXp ?: 0f
         levelInfo = LevelSystem.levelFromXp(profileXp)
         profileName = currentProf?.name ?: ""
+        useCustomGoals = currentProf?.useCustomGoals ?: false
+        customPushGoal = currentProf?.customPushGoal ?: 10
+        customSquatGoal = currentProf?.customSquatGoal ?: 10
+        customBicepGoal = currentProf?.customBicepGoal ?: 60
         progressManager.load(levelInfo, profileXp, currentProf)
         
         if (healthConnectManager.isSupported) {
             hcConnected = healthConnectManager.hasPermissions()
             if (hcConnected) {
                 hcStepsToday = healthConnectManager.getTodaySteps()
-                healthConnectManager.syncFromHealthConnect()
+                healthConnectManager.syncFromHealthConnect(xpRates)
                 val notionApiKey = currentProf?.notionApiKey ?: ""
                 val notionDbId = currentProf?.notionDbId ?: ""
                 if (notionApiKey.isNotEmpty() && notionDbId.isNotEmpty()) {
@@ -133,7 +188,7 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                         val diff = repIndex - lastBicepRight
                         if (diff > 0) { progressManager.recordBicepRight(diff, levelInfo, profileXp); lastBicepRight = repIndex }
                     }
-                    else -> {} // Other exercises don't track specific daily rep counts yet
+                    else -> {}
                 }
                 appScope.launch {
                     val sessionXp = ref.getTotalXp()
@@ -158,15 +213,22 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
         ref
     }
 
+    // Keep engine's xpRates synced
+    LaunchedEffect(xpRates) {
+        engine.xpRates = xpRates
+    }
+
     var notionApiKey by remember { mutableStateOf("") }
     var notionDbId by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         val prof = withContext(Dispatchers.IO) { repo.getProfile() }
-        profileXp = prof?.totalXp ?: 0f // Update totalXp to Float casted to Int or just handle it as Float? Wait, totalXp is Float now! Let's check profileXp
-        // Wait, profileXp is Int in the app code, let's keep it Int.
-        profileXp = (prof?.totalXp ?: 0f)
+        profileXp = prof?.totalXp ?: 0f
         profileName = prof?.name ?: ""
+        useCustomGoals = prof?.useCustomGoals ?: false
+        customPushGoal = prof?.customPushGoal ?: 10
+        customSquatGoal = prof?.customSquatGoal ?: 10
+        customBicepGoal = prof?.customBicepGoal ?: 60
         notionApiKey = prof?.notionApiKey ?: ""
         notionDbId = prof?.notionDbId ?: ""
         levelInfo = LevelSystem.levelFromXp(profileXp)
@@ -175,7 +237,7 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     }
 
     if (startDestination == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator() }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
 
@@ -272,7 +334,13 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                     useMaterialYou = useMaterialYou,
                     isHealthConnectAvailable = healthConnectManager.isSupported,
                     isHealthConnectConnected = hcConnected,
-                    onConnectHealthConnect = { hcPermissionLauncher.launch(healthConnectManager.permissions.toTypedArray()) },
+                    onConnectHealthConnect = { 
+                        try {
+                            hcPermissionLauncher.launch(healthConnectManager.permissions)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Could not open Health Connect permissions: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    },
                     onSyncToHealthConnect = { showDialog -> 
                         appScope.launch(Dispatchers.IO) {
                             val res = healthConnectManager.syncToHealthConnect()
@@ -284,19 +352,51 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                     },
                     onSyncFromHealthConnect = { showDialog ->
                         appScope.launch(Dispatchers.IO) {
-                            healthConnectManager.syncFromHealthConnect()
+                            val res = healthConnectManager.syncFromHealthConnect(xpRates)
                             val newProf = repo.getProfile()
                             withContext(Dispatchers.Main) {
                                 profileXp = newProf?.totalXp ?: 0f
                                 levelInfo = LevelSystem.levelFromXp(profileXp)
                                 progressManager.recalculateDailyProgress()
                                 progressManager.load(levelInfo, profileXp, newProf)
-                                showDialog("Import Success", "Successfully imported recent sessions from Health Connect.")
+                                if (res.isSuccess) {
+                                    showDialog("Import Success", "Imported ${res.getOrNull()} sessions from Health Connect.")
+                                } else {
+                                    showDialog("Import Failed", res.exceptionOrNull()?.message ?: "Unknown error")
+                                }
                             }
                         }
                     },
                     onThemeModeChange = { themePrefs.setThemeMode(it) },
                     onUseMaterialYouChange = { themePrefs.setUseMaterialYou(it) },
+                    useCustomGoals = useCustomGoals,
+                    customPushGoal = customPushGoal,
+                    customSquatGoal = customSquatGoal,
+                    customBicepGoal = customBicepGoal,
+                    onSaveDailyGoals = { useCustom, push, squat, bicep ->
+                        useCustomGoals = useCustom
+                        customPushGoal = push
+                        customSquatGoal = squat
+                        customBicepGoal = bicep
+                        appScope.launch(Dispatchers.IO) {
+                            repo.updateCustomGoals(useCustom, push, squat, bicep)
+                            val newProf = repo.getProfile()
+                            withContext(Dispatchers.Main) {
+                                progressManager.updateGoals(levelInfo, profileXp, newProf)
+                                progressManager.recalculateDailyProgress()
+                                Toast.makeText(context, "Daily goals updated", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    xpRates = xpRates,
+                    onUpdateXpRates = { newRates ->
+                        xpPrefs.updateRates(newRates)
+                        Toast.makeText(context, "XP rates updated", Toast.LENGTH_SHORT).show()
+                    },
+                    onResetXpRates = {
+                        xpPrefs.resetToDefaults()
+                        Toast.makeText(context, "XP rates reset to default", Toast.LENGTH_SHORT).show()
+                    },
                     notionApiKey = notionApiKey,
                     notionDbId = notionDbId,
                     onToggleLandmarks = { showLandmarks = it },
@@ -314,13 +414,14 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                                     obj.put("durationSeconds", s.durationSeconds.toDouble())
                                     obj.put("totalXp", s.totalXp.toDouble())
                                     obj.put("syncedToNotion", s.syncedToNotion)
+                                    obj.put("isManual", s.isManual)
                                     jsonArray.put(obj)
                                 }
                                 context.contentResolver.openOutputStream(uri)?.use { out ->
                                     out.write(jsonArray.toString(2).toByteArray(Charsets.UTF_8))
                                 }
                                 withContext(Dispatchers.Main) {
-                                    android.widget.Toast.makeText(context, "Exported successfully", android.widget.Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Exported successfully", Toast.LENGTH_SHORT).show()
                                 }
                             } catch (e: Exception) {
                                 e.printStackTrace()
@@ -347,13 +448,14 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                                     if (existingMap.containsKey(ts)) {
                                         skipped++
                                     } else {
-                                        val s = com.example.workouttracker.db.SessionEntity(
+                                        val s = SessionEntity(
                                             timestampIso = ts,
                                             exercise = obj.getString("exercise"),
                                             reps = obj.getInt("reps"),
                                             durationSeconds = obj.getDouble("durationSeconds").toFloat(),
                                             totalXp = obj.getDouble("totalXp").toFloat(),
-                                            syncedToNotion = obj.optBoolean("syncedToNotion", false)
+                                            syncedToNotion = obj.optBoolean("syncedToNotion", false),
+                                            isManual = obj.optBoolean("isManual", false)
                                         )
                                         repo.insertSession(s)
                                         addedXp += s.totalXp
@@ -372,17 +474,17 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                                         profileXp = newProf?.totalXp ?: 0f
                                         levelInfo = LevelSystem.levelFromXp(profileXp)
                                         progressManager.load(levelInfo, profileXp, newProf)
-                                        android.widget.Toast.makeText(context, "Imported $imported workouts ($skipped skipped)", android.widget.Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "Imported $imported workouts ($skipped skipped)", Toast.LENGTH_LONG).show()
                                     }
                                 } else {
                                     withContext(Dispatchers.Main) {
-                                        android.widget.Toast.makeText(context, "No new workouts to import ($skipped skipped)", android.widget.Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "No new workouts to import ($skipped skipped)", Toast.LENGTH_LONG).show()
                                     }
                                 }
                             } catch (e: Exception) {
                                 e.printStackTrace()
                                 withContext(Dispatchers.Main) {
-                                    android.widget.Toast.makeText(context, "Import failed: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
                                 }
                             }
                         }
@@ -393,10 +495,10 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                         notionDbId = db
                         appScope.launch(Dispatchers.IO) { repo.updateNotionKeys(key, db) }
                     },
-                    onSyncNotion = { onShowDialog ->
+                    onSyncNotion = { onProgress, onShowDialog ->
                         val syncManager = NotionSyncManager(repo)
                         appScope.launch {
-                            val result = syncManager.syncUnsyncedSessions(notionApiKey, notionDbId)
+                            val result = syncManager.syncUnsyncedSessions(notionApiKey, notionDbId, onProgress)
                             if (result.isSuccess) {
                                 onShowDialog("Sync Successful", "Synced ${result.getOrNull()} sessions to Notion.")
                             } else {
@@ -404,10 +506,10 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                             }
                         }
                     },
-                    onRetrieveNotion = { onShowDialog ->
+                    onRetrieveNotion = { onProgress, onShowDialog ->
                         val syncManager = NotionSyncManager(repo)
                         appScope.launch {
-                            val result = syncManager.retrieveAllSessions(notionApiKey, notionDbId)
+                            val result = syncManager.retrieveAllSessions(notionApiKey, notionDbId, onProgress)
                             if (result.isSuccess) {
                                 val count = result.getOrNull() ?: 0
                                 progressManager.recalculateDailyProgress()
@@ -435,21 +537,25 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                 
                 if (showManualDialog) {
                     ManualEntryDialog(
+                        manualWorkoutPrefs = manualWorkoutPrefs,
+                        xpRates = xpRates,
                         onDismiss = { showManualDialog = false },
                         onSave = { exercise, reps, durationMins, isCustom, isDurationBased, dateMs ->
                             showManualDialog = false
                             val xpEarned = if (isCustom) {
-                                if (isDurationBased) LevelSystem.xpForManualDuration(durationMins) else LevelSystem.xpForManualReps(reps)
+                                if (isDurationBased) LevelSystem.xpForManualDuration(durationMins, xpRates) 
+                                else LevelSystem.xpForManualReps(reps, xpRates)
                             } else {
-                                LevelSystem.xpForStandardExercise(exercise, reps)
+                                if (isDurationBased) LevelSystem.xpForManualDuration(durationMins, xpRates)
+                                else LevelSystem.xpForStandardExercise(exercise, reps, xpRates)
                             }
                             
                             appScope.launch(Dispatchers.IO) {
                                 val isoTime = dateMs?.let { 
-                                    java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME) 
-                                } ?: java.time.OffsetDateTime.now().format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                                    Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME) 
+                                } ?: OffsetDateTime.now().format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
                                 
-                                val entity = com.example.workouttracker.db.SessionEntity(
+                                val entity = SessionEntity(
                                     timestampIso = isoTime,
                                     exercise = exercise,
                                     reps = reps,
@@ -469,6 +575,7 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                                     profileXp = newProf?.totalXp ?: 0f
                                     levelInfo = LevelSystem.levelFromXp(profileXp)
                                     progressManager.load(levelInfo, profileXp, newProf)
+                                    Toast.makeText(context, "Added manual workout: $exercise", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -476,7 +583,20 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                 }
             }
             composable("history") {
-                HistoryScreen(repo = repo, onBack = { nav.popBackStack() })
+                HistoryScreen(
+                    repo = repo,
+                    progressManager = progressManager,
+                    xpPrefs = xpPrefs,
+                    onDataChanged = {
+                        appScope.launch {
+                            val newProf = withContext(Dispatchers.IO) { repo.getProfile() }
+                            profileXp = newProf?.totalXp ?: 0f
+                            levelInfo = LevelSystem.levelFromXp(profileXp)
+                            progressManager.load(levelInfo, profileXp, newProf)
+                        }
+                    },
+                    onBack = { nav.popBackStack() }
+                )
             }
             composable("session") {
                 WorkoutSessionScreen(
@@ -492,7 +612,12 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     }
 
     if (showLevelUp) {
-        AlertDialog(onDismissRequest = { showLevelUp = false }, confirmButton = { TextButton({ showLevelUp = false }) { Text("Nice!") } }, title = { Text("Level Up") }, text = { Text("You reached Level ${levelInfo.level}") })
+        AlertDialog(
+            onDismissRequest = { showLevelUp = false }, 
+            confirmButton = { TextButton({ showLevelUp = false }) { Text("Nice!") } }, 
+            title = { Text("Level Up 🎉") }, 
+            text = { Text("You reached Level ${levelInfo.level} (${levelInfo.rank})!") }
+        )
     }
 }
 
@@ -501,10 +626,10 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
 private fun OnboardingScreen(onContinue: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text(stringResource(id = com.example.workouttracker.R.string.welcome_title), style = MaterialTheme.typography.headlineMedium)
-        Text(stringResource(id = com.example.workouttracker.R.string.welcome_sub))
-        OutlinedTextField(value = name, onValueChange = { name = it.take(24) }, label = { Text(stringResource(id = com.example.workouttracker.R.string.enter_name_hint)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Button(onClick = { onContinue(name.trim()) }, enabled = name.trim().length >= 2, modifier = Modifier.fillMaxWidth()) { Text(stringResource(id = com.example.workouttracker.R.string.continue_label)) }
+        Text(stringResource(id = R.string.welcome_title), style = MaterialTheme.typography.headlineMedium)
+        Text(stringResource(id = R.string.welcome_sub))
+        OutlinedTextField(value = name, onValueChange = { name = it.take(24) }, label = { Text(stringResource(id = R.string.enter_name_hint)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Button(onClick = { onContinue(name.trim()) }, enabled = name.trim().length >= 2, modifier = Modifier.fillMaxWidth()) { Text(stringResource(id = R.string.continue_label)) }
     }
 }
 
@@ -552,6 +677,14 @@ private fun SettingsScreen(
     onSyncFromHealthConnect: (onShowDialog: (String, String) -> Unit) -> Unit,
     onThemeModeChange: (Int) -> Unit,
     onUseMaterialYouChange: (Boolean) -> Unit,
+    useCustomGoals: Boolean,
+    customPushGoal: Int,
+    customSquatGoal: Int,
+    customBicepGoal: Int,
+    onSaveDailyGoals: (useCustom: Boolean, push: Int, squat: Int, bicep: Int) -> Unit,
+    xpRates: XpRates,
+    onUpdateXpRates: (XpRates) -> Unit,
+    onResetXpRates: () -> Unit,
     notionApiKey: String,
     notionDbId: String,
     onToggleLandmarks: (Boolean) -> Unit, 
@@ -559,12 +692,19 @@ private fun SettingsScreen(
     onImportJson: (android.net.Uri) -> Unit,
     onOpenManualEntry: () -> Unit,
     onSaveNotionKeys: (String, String) -> Unit,
-    onSyncNotion: (onShowDialog: (String, String) -> Unit) -> Unit,
-    onRetrieveNotion: (onShowDialog: (String, String) -> Unit) -> Unit,
+    onSyncNotion: (onProgress: (current: Int, total: Int) -> Unit, onShowDialog: (String, String) -> Unit) -> Unit,
+    onRetrieveNotion: (onProgress: (fetchedCount: Int) -> Unit, onShowDialog: (String, String) -> Unit) -> Unit,
     onShareProfile: () -> Unit
 ) {
     var dialogTitle by remember { mutableStateOf<String?>(null) }
     var dialogMessage by remember { mutableStateOf<String?>(null) }
+    var showXpRatesDialog by remember { mutableStateOf(false) }
+
+    // Notion Sync States
+    var isSyncingNotion by remember { mutableStateOf(false) }
+    var syncProgressText by remember { mutableStateOf("") }
+    var isRetrievingNotion by remember { mutableStateOf(false) }
+    var retrieveProgressText by remember { mutableStateOf("") }
 
     if (dialogTitle != null && dialogMessage != null) {
         AlertDialog(
@@ -575,13 +715,13 @@ private fun SettingsScreen(
         )
     }
 
-    val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+    val exportLauncher = rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         uri?.let { onExportJson(it) }
     }
     
-    val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+    val importLauncher = rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let { onImportJson(it) }
@@ -590,6 +730,7 @@ private fun SettingsScreen(
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp).padding(top = 48.dp, bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         
+        // Pose Detection
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Pose Detection", style = MaterialTheme.typography.titleMedium)
@@ -604,6 +745,7 @@ private fun SettingsScreen(
             }
         }
         
+        // Appearance
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Appearance", style = MaterialTheme.typography.titleMedium)
@@ -633,7 +775,120 @@ private fun SettingsScreen(
                 }
             }
         }
+
+        // Daily Goals Card
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Daily Goals", style = MaterialTheme.typography.titleMedium)
+                
+                var customEnabled by remember(useCustomGoals) { mutableStateOf(useCustomGoals) }
+                var pushText by remember(customPushGoal) { mutableStateOf(customPushGoal.toString()) }
+                var squatText by remember(customSquatGoal) { mutableStateOf(customSquatGoal.toString()) }
+                var bicepText by remember(customBicepGoal) { mutableStateOf(customBicepGoal.toString()) }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Custom Daily Goals", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            if (customEnabled) "Manual target values per day." else "Goals scale automatically with your level.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(checked = customEnabled, onCheckedChange = { customEnabled = it })
+                }
+
+                if (customEnabled) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = pushText,
+                            onValueChange = { pushText = it },
+                            label = { Text("Pushups") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = squatText,
+                            onValueChange = { squatText = it },
+                            label = { Text("Squats") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = bicepText,
+                            onValueChange = { bicepText = it },
+                            label = { Text("Curls") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        val push = pushText.toIntOrNull() ?: 10
+                        val squat = squatText.toIntOrNull() ?: 10
+                        val bicep = bicepText.toIntOrNull() ?: 60
+                        onSaveDailyGoals(customEnabled, push, squat, bicep)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Save Daily Goals")
+                }
+            }
+        }
+
+        // XP Rates & Grind Card
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("XP Progression & Grind", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Customize XP earned per repetition or minute of workout.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Pushups / Squats", style = MaterialTheme.typography.bodyMedium)
+                    Text("${String.format(Locale.US, "%.2f", xpRates.pushup)} XP / rep", fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Bicep Curls", style = MaterialTheme.typography.bodyMedium)
+                    Text("${String.format(Locale.US, "%.3f", xpRates.bicepCurl)} XP / rep", fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Pullups", style = MaterialTheme.typography.bodyMedium)
+                    Text("${String.format(Locale.US, "%.2f", xpRates.pullup)} XP / rep", fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Manual Duration", style = MaterialTheme.typography.bodyMedium)
+                    Text("${String.format(Locale.US, "%.2f", xpRates.manualDurationPerMin)} XP / min", fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("XP Multiplier", style = MaterialTheme.typography.bodyMedium)
+                    Text("${String.format(Locale.US, "%.1f", xpRates.multiplier)}x", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { showXpRatesDialog = true },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Edit Rates")
+                    }
+                    OutlinedButton(
+                        onClick = onResetXpRates,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Reset Defaults")
+                    }
+                }
+            }
+        }
         
+        // Health Connect
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Health Connect Integration", style = MaterialTheme.typography.titleMedium)
@@ -644,18 +899,21 @@ private fun SettingsScreen(
                     Text("Connected to Health Connect ✓", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(16.dp))
                     Button(onClick = { onSyncToHealthConnect { title, msg -> dialogTitle = title; dialogMessage = msg } }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(androidx.compose.material.icons.Icons.Default.ArrowUpward, null)
+                        Icon(Icons.Default.ArrowUpward, null)
                         Spacer(Modifier.width(8.dp))
                         Text("Export to Health Connect")
                     }
+                    Spacer(Modifier.height(8.dp))
                     OutlinedButton(onClick = { onSyncFromHealthConnect { title, msg -> dialogTitle = title; dialogMessage = msg } }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(androidx.compose.material.icons.Icons.Default.ArrowDownward, null)
+                        Icon(Icons.Default.ArrowDownward, null)
                         Spacer(Modifier.width(8.dp))
                         Text("Import from Health Connect")
                     }
                 } else {
+                    Text("Connect to Google Health Connect to sync your workouts and track daily steps.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(12.dp))
                     Button(onClick = onConnectHealthConnect, modifier = Modifier.fillMaxWidth()) {
-                        Icon(androidx.compose.material.icons.Icons.Default.Favorite, null)
+                        Icon(Icons.Default.Favorite, null)
                         Spacer(Modifier.width(8.dp))
                         Text("Connect Health Connect")
                     }
@@ -663,6 +921,7 @@ private fun SettingsScreen(
             }
         }
         
+        // Notion Integration
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Notion Integration (Optional)", style = MaterialTheme.typography.titleMedium)
@@ -676,14 +935,14 @@ private fun SettingsScreen(
                     
                     OutlinedTextField(
                         value = tempKey, 
-                        onValueChange = { tempKey = it },
+                        onValueChange = { tempKey = it }, 
                         label = { Text("Integration Token") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     
                     OutlinedTextField(
                         value = tempDb, 
-                        onValueChange = { tempDb = it },
+                        onValueChange = { tempDb = it }, 
                         label = { Text("Database ID") },
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -697,7 +956,7 @@ private fun SettingsScreen(
                 } else {
                     OutlinedTextField(
                         value = "••••••••••••••••••••••••••••••", 
-                        onValueChange = { },
+                        onValueChange = { }, 
                         label = { Text("Integration Token") },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = false
@@ -705,7 +964,7 @@ private fun SettingsScreen(
                     
                     OutlinedTextField(
                         value = "••••••••••••••••••••••••••••••", 
-                        onValueChange = { },
+                        onValueChange = { }, 
                         label = { Text("Database ID") },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = false
@@ -716,17 +975,97 @@ private fun SettingsScreen(
                     }
                 }
                 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { onSyncNotion { title, msg -> dialogTitle = title; dialogMessage = msg } }, modifier = Modifier.weight(1f)) {
-                        Text("Sync to Notion")
+                // Notion Sync status / indicator
+                if (isSyncingNotion) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text(
+                            text = syncProgressText.ifBlank { "Syncing with Notion..." },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
-                    Button(onClick = { onRetrieveNotion { title, msg -> dialogTitle = title; dialogMessage = msg } }, modifier = Modifier.weight(1f)) {
-                        Text("Retrieve")
+                }
+
+                if (isRetrievingNotion) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text(
+                            text = retrieveProgressText.ifBlank { "Retrieving from Notion..." },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { 
+                            isSyncingNotion = true
+                            syncProgressText = "Preparing sync..."
+                            onSyncNotion(
+                                { current, total ->
+                                    syncProgressText = "Syncing workout $current of $total..."
+                                },
+                                { title, msg ->
+                                    isSyncingNotion = false
+                                    syncProgressText = ""
+                                    dialogTitle = title
+                                    dialogMessage = msg
+                                }
+                            )
+                        }, 
+                        enabled = !isSyncingNotion && !isRetrievingNotion,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (isSyncingNotion) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Syncing...")
+                        } else {
+                            Text("Sync to Notion")
+                        }
+                    }
+                    Button(
+                        onClick = { 
+                            isRetrievingNotion = true
+                            retrieveProgressText = "Fetching pages..."
+                            onRetrieveNotion(
+                                { count ->
+                                    retrieveProgressText = "Fetched $count sessions..."
+                                },
+                                { title, msg ->
+                                    isRetrievingNotion = false
+                                    retrieveProgressText = ""
+                                    dialogTitle = title
+                                    dialogMessage = msg
+                                }
+                            )
+                        }, 
+                        enabled = !isSyncingNotion && !isRetrievingNotion,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (isRetrievingNotion) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Retrieving...")
+                        } else {
+                            Text("Retrieve")
+                        }
                     }
                 }
             }
         }
         
+        // Data Management
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Data Management", style = MaterialTheme.typography.titleMedium)
@@ -738,13 +1077,14 @@ private fun SettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Refresh, null) // Needs an icon like Refresh or Download
+                    Icon(Icons.Default.Refresh, null)
                     Spacer(Modifier.width(8.dp))
                     Text("Import Data (JSON)")
                 }
             }
         }
         
+        // Manual Entry
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Manual Entry", style = MaterialTheme.typography.titleMedium)
@@ -757,6 +1097,7 @@ private fun SettingsScreen(
             }
         }
         
+        // Profile Sharing
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Profile Sharing", style = MaterialTheme.typography.titleMedium)
@@ -775,6 +1116,143 @@ private fun SettingsScreen(
             Text("Orchestrated By Vinay Kumar with love ❤️", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+
+    if (showXpRatesDialog) {
+        EditXpRatesDialog(
+            currentRates = xpRates,
+            onDismiss = { showXpRatesDialog = false },
+            onSave = { newRates ->
+                showXpRatesDialog = false
+                onUpdateXpRates(newRates)
+            }
+        )
+    }
+}
+
+@Composable
+private fun EditXpRatesDialog(
+    currentRates: XpRates,
+    onDismiss: () -> Unit,
+    onSave: (XpRates) -> Unit
+) {
+    var pushup by remember { mutableStateOf(currentRates.pushup.toString()) }
+    var squat by remember { mutableStateOf(currentRates.squat.toString()) }
+    var bicep by remember { mutableStateOf(String.format(Locale.US, "%.4f", currentRates.bicepCurl)) }
+    var lunge by remember { mutableStateOf(currentRates.lunge.toString()) }
+    var shoulderPress by remember { mutableStateOf(currentRates.shoulderPress.toString()) }
+    var jumpingJack by remember { mutableStateOf(currentRates.jumpingJack.toString()) }
+    var pullup by remember { mutableStateOf(currentRates.pullup.toString()) }
+    var manualRep by remember { mutableStateOf(currentRates.manualRep.toString()) }
+    var manualDur by remember { mutableStateOf(currentRates.manualDurationPerMin.toString()) }
+    var multiplier by remember { mutableStateOf(currentRates.multiplier.toString()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Customize XP Rates") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = multiplier,
+                    onValueChange = { multiplier = it },
+                    label = { Text("Global XP Multiplier (e.g. 1.0, 1.5)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = pushup,
+                    onValueChange = { pushup = it },
+                    label = { Text("Pushup XP / rep") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = squat,
+                    onValueChange = { squat = it },
+                    label = { Text("Squat XP / rep") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = bicep,
+                    onValueChange = { bicep = it },
+                    label = { Text("Bicep Curl XP / rep") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = pullup,
+                    onValueChange = { pullup = it },
+                    label = { Text("Pullup XP / rep") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = lunge,
+                    onValueChange = { lunge = it },
+                    label = { Text("Lunge XP / rep") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = shoulderPress,
+                    onValueChange = { shoulderPress = it },
+                    label = { Text("Shoulder Press XP / rep") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = jumpingJack,
+                    onValueChange = { jumpingJack = it },
+                    label = { Text("Jumping Jack XP / rep") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = manualRep,
+                    onValueChange = { manualRep = it },
+                    label = { Text("Manual Reps XP / rep") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = manualDur,
+                    onValueChange = { manualDur = it },
+                    label = { Text("Manual Duration XP / min") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val newRates = XpRates(
+                        pushup = pushup.toFloatOrNull() ?: currentRates.pushup,
+                        squat = squat.toFloatOrNull() ?: currentRates.squat,
+                        bicepCurl = bicep.toFloatOrNull() ?: currentRates.bicepCurl,
+                        lunge = lunge.toFloatOrNull() ?: currentRates.lunge,
+                        shoulderPress = shoulderPress.toFloatOrNull() ?: currentRates.shoulderPress,
+                        jumpingJack = jumpingJack.toFloatOrNull() ?: currentRates.jumpingJack,
+                        pullup = pullup.toFloatOrNull() ?: currentRates.pullup,
+                        manualRep = manualRep.toFloatOrNull() ?: currentRates.manualRep,
+                        manualDurationPerMin = manualDur.toFloatOrNull() ?: currentRates.manualDurationPerMin,
+                        multiplier = multiplier.toFloatOrNull() ?: currentRates.multiplier
+                    )
+                    onSave(newRates)
+                }
+            ) {
+                Text("Save Rates")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable
@@ -792,7 +1270,7 @@ private fun ProfileScreen(
     var temp by remember { mutableStateOf(name) }
     
     // History Data Integration
-    var sessions by remember { mutableStateOf<List<com.example.workouttracker.db.SessionEntity>>(emptyList()) }
+    var sessions by remember { mutableStateOf<List<SessionEntity>>(emptyList()) }
     var lineChartData by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
     var heatMapData by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     
@@ -807,7 +1285,6 @@ private fun ProfileScreen(
         
         // XP Stats
         val today = LocalDate.now()
-
 
         fun parseDate(iso: String): LocalDate {
             return try {
@@ -912,12 +1389,25 @@ private fun ProfileScreen(
         // History List
         Text("Recent History", style = MaterialTheme.typography.titleMedium)
         sessions.take(10).forEach { session ->
-             val name = com.example.workouttracker.Utils.capitalize(session.exercise.replace("_", " "))
-             ListItem(
+            val name = Utils.capitalize(session.exercise.replace("_", " "))
+            ListItem(
+                leadingContent = {
+                    WorkoutSourceBadge(isManual = session.isManual, modifier = Modifier.size(32.dp))
+                },
                 headlineContent = { Text(name, fontWeight = FontWeight.Bold) },
-                supportingContent = { Text("${session.reps} reps • ${String.format(Locale.US, "%.2f", session.totalXp)} XP • ${session.timestampIso.take(10)}") }
+                supportingContent = { 
+                    val durationMins = (session.durationSeconds / 60).toInt()
+                    val details = if (durationMins > 0 && session.reps > 0) {
+                        "${session.reps} reps • $durationMins mins • ${String.format(Locale.US, "%.2f", session.totalXp)} XP • ${session.timestampIso.take(10)}"
+                    } else if (durationMins > 0) {
+                        "$durationMins mins • ${String.format(Locale.US, "%.2f", session.totalXp)} XP • ${session.timestampIso.take(10)}"
+                    } else {
+                        "${session.reps} reps • ${String.format(Locale.US, "%.2f", session.totalXp)} XP • ${session.timestampIso.take(10)}"
+                    }
+                    Text(details)
+                }
             )
-             Divider()
+            Divider()
         }
         Button(onClick = onViewHistory, modifier = Modifier.fillMaxWidth()) {
             Text("View Full History")
@@ -939,35 +1429,90 @@ fun XpStatCard(label: String, xp: Float, modifier: Modifier = Modifier) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManualEntryDialog(
+    manualWorkoutPrefs: ManualWorkoutPreferences,
+    xpRates: XpRates,
     onDismiss: () -> Unit,
     onSave: (exercise: String, reps: Int, durationMins: Int, isCustom: Boolean, isDurationBased: Boolean, dateMs: Long?) -> Unit
 ) {
     val isDark = androidx.compose.foundation.isSystemInDarkTheme() || MaterialTheme.colorScheme.background.red < 0.5f
     val textColor = if (isDark) Color.White else Color.Black
     
-    var exerciseType by remember { mutableStateOf("Pushups") }
+    val workoutTypes by manualWorkoutPrefs.workoutTypes.collectAsState()
+
+    var selectedType by remember { mutableStateOf(workoutTypes.firstOrNull()?.name ?: "Pushups") }
     var customName by remember { mutableStateOf("") }
     var isDurationBased by remember { mutableStateOf(false) }
     var repsInput by remember { mutableStateOf("") }
     var durationIndex by remember { mutableStateOf(4) } // index for 10 mins
+    var showManageTypesDialog by remember { mutableStateOf(false) }
     
     val durationOptions = listOf(1, 2, 3, 5, 10, 15, 20, 30, 45, 60)
-    val standardTypes = listOf("Pushups", "Squats", "Lunges", "Bicep Curl - Left", "Bicep Curl - Right", "Shoulder Press", "Jumping Jacks", "Pullups", "Other")
+
+    // Sync isDurationBased when selectedType changes
+    LaunchedEffect(selectedType, workoutTypes) {
+        val found = workoutTypes.find { it.name.equals(selectedType, ignoreCase = true) }
+        if (found != null && selectedType != "Other") {
+            isDurationBased = found.isDurationBased
+        }
+    }
     
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Card(Modifier.fillMaxWidth().padding(16.dp)) {
-            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(
+                Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
                 Text("Manual Entry", style = MaterialTheme.typography.headlineSmall, color = textColor, fontWeight = FontWeight.Bold)
                 
                 var expanded by remember { mutableStateOf(false) }
-                Box {
-                    OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text(exerciseType, color = textColor)
-                    }
-                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                        standardTypes.forEach { type ->
-                            DropdownMenuItem(text = { Text(type) }, onClick = { exerciseType = type; expanded = false })
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(selectedType, color = textColor)
                         }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            workoutTypes.forEach { type ->
+                                DropdownMenuItem(
+                                    text = { 
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(type.name)
+                                            if (type.isCustom) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                                    shape = MaterialTheme.shapes.extraSmall
+                                                ) {
+                                                    Text("Custom", fontSize = 10.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                                }
+                                            }
+                                        }
+                                    }, 
+                                    onClick = { 
+                                        selectedType = type.name
+                                        isDurationBased = type.isDurationBased
+                                        expanded = false 
+                                    }
+                                )
+                            }
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("Other (Custom One-off)") },
+                                onClick = { 
+                                    selectedType = "Other"
+                                    expanded = false 
+                                }
+                            )
+                        }
+                    }
+
+                    IconButton(onClick = { showManageTypesDialog = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Manage Types", tint = MaterialTheme.colorScheme.primary)
                     }
                 }
                 
@@ -990,7 +1535,7 @@ fun ManualEntryDialog(
                 }
                 
                 val dateText = selectedDateMs?.let { 
-                    java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()
+                    Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate().toString()
                 } ?: "Today"
                 OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.DateRange, null)
@@ -998,9 +1543,9 @@ fun ManualEntryDialog(
                     Text(dateText, color = textColor)
                 }
                 
-                val isCustom = exerciseType == "Other"
+                val isOther = selectedType == "Other"
                 
-                if (isCustom) {
+                if (isOther) {
                     OutlinedTextField(
                         value = customName, 
                         onValueChange = { customName = it }, 
@@ -1010,35 +1555,33 @@ fun ManualEntryDialog(
                     
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Tracking Mode:", modifier = Modifier.weight(1f))
-                        TextButton(onClick = { isDurationBased = false }, colors = ButtonDefaults.textButtonColors(contentColor = if (!isDurationBased) MaterialTheme.colorScheme.primary else Color.Gray)) {
+                        TextButton(
+                            onClick = { isDurationBased = false }, 
+                            colors = ButtonDefaults.textButtonColors(contentColor = if (!isDurationBased) MaterialTheme.colorScheme.primary else Color.Gray)
+                        ) {
                             Text("Reps")
                         }
-                        TextButton(onClick = { isDurationBased = true }, colors = ButtonDefaults.textButtonColors(contentColor = if (isDurationBased) MaterialTheme.colorScheme.primary else Color.Gray)) {
+                        TextButton(
+                            onClick = { isDurationBased = true }, 
+                            colors = ButtonDefaults.textButtonColors(contentColor = if (isDurationBased) MaterialTheme.colorScheme.primary else Color.Gray)
+                        ) {
                             Text("Duration")
                         }
                     }
-                    
-                    if (isDurationBased) {
-                        Text("Duration (Minutes)", color = textColor, style = MaterialTheme.typography.labelMedium)
-                        var durationExpanded by remember { mutableStateOf(false) }
-                        Box {
-                            OutlinedButton(onClick = { durationExpanded = true }, modifier = Modifier.fillMaxWidth()) {
-                                Text("${durationOptions[durationIndex]} mins", color = textColor)
-                            }
-                            DropdownMenu(expanded = durationExpanded, onDismissRequest = { durationExpanded = false }) {
-                                durationOptions.forEachIndexed { index, mins ->
-                                    DropdownMenuItem(text = { Text("$mins mins") }, onClick = { durationIndex = index; durationExpanded = false })
-                                }
+                }
+
+                if (isDurationBased) {
+                    Text("Duration (Minutes)", color = textColor, style = MaterialTheme.typography.labelMedium)
+                    var durationExpanded by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedButton(onClick = { durationExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("${durationOptions[durationIndex]} mins", color = textColor)
+                        }
+                        DropdownMenu(expanded = durationExpanded, onDismissRequest = { durationExpanded = false }) {
+                            durationOptions.forEachIndexed { index, mins ->
+                                DropdownMenuItem(text = { Text("$mins mins") }, onClick = { durationIndex = index; durationExpanded = false })
                             }
                         }
-                    } else {
-                        OutlinedTextField(
-                            value = repsInput, 
-                            onValueChange = { repsInput = it }, 
-                            label = { Text("Total Reps") },
-                            modifier = Modifier.fillMaxWidth(),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-                        )
                     }
                 } else {
                     OutlinedTextField(
@@ -1046,17 +1589,46 @@ fun ManualEntryDialog(
                         onValueChange = { repsInput = it }, 
                         label = { Text("Reps") },
                         modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                     )
+                }
+                
+                val currentReps = repsInput.toIntOrNull() ?: 0
+                val currentDur = durationOptions[durationIndex]
+                val estimatedXp = if (isDurationBased) {
+                    LevelSystem.xpForManualDuration(currentDur, xpRates)
+                } else {
+                    if (isOther) LevelSystem.xpForManualReps(currentReps, xpRates)
+                    else LevelSystem.xpForStandardExercise(selectedType, currentReps, xpRates)
+                }
+
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Estimated Reward:", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "+${String.format(Locale.US, "%.2f", estimatedXp)} XP",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
                 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text("Cancel", color = textColor.copy(alpha=0.7f)) }
                     Button(onClick = {
-                        val finalName = if (isCustom) customName.ifBlank { "Custom Workout" } else exerciseType
-                        val finalReps = if (isCustom && isDurationBased) 0 else (repsInput.toIntOrNull() ?: 0)
-                        val finalDuration = if (isCustom && isDurationBased) durationOptions[durationIndex] else 0
-                        onSave(finalName, finalReps, finalDuration, isCustom, isDurationBased, selectedDateMs)
+                        val finalName = if (isOther) customName.ifBlank { "Custom Workout" } else selectedType
+                        val finalReps = if (isDurationBased) 0 else (repsInput.toIntOrNull() ?: 0)
+                        val finalDuration = if (isDurationBased) durationOptions[durationIndex] else 0
+                        onSave(finalName, finalReps, finalDuration, isOther, isDurationBased, selectedDateMs)
                     }) {
                         Text("Save")
                     }
@@ -1064,10 +1636,157 @@ fun ManualEntryDialog(
             }
         }
     }
+
+    if (showManageTypesDialog) {
+        ManageWorkoutTypesDialog(
+            prefs = manualWorkoutPrefs,
+            onDismiss = { showManageTypesDialog = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ManageWorkoutTypesDialog(
+    prefs: ManualWorkoutPreferences,
+    onDismiss: () -> Unit
+) {
+    val types by prefs.workoutTypes.collectAsState()
+    var newTypeName by remember { mutableStateOf("") }
+    var newTypeDurationBased by remember { mutableStateOf(false) }
+    var editingType by remember { mutableStateOf<ManualWorkoutType?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Manage Manual Workout Types") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    "Custom types will only appear in the Manual Entry dropdown (not in camera workouts).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Add new type section
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(if (editingType == null) "Add Custom Workout Type" else "Edit Custom Workout Type", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        OutlinedTextField(
+                            value = newTypeName,
+                            onValueChange = { newTypeName = it },
+                            label = { Text("Type Name (e.g. Bench Press)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Tracking Mode:", modifier = Modifier.weight(1f), fontSize = 13.sp)
+                            FilterChip(
+                                selected = !newTypeDurationBased,
+                                onClick = { newTypeDurationBased = false },
+                                label = { Text("Reps") }
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            FilterChip(
+                                selected = newTypeDurationBased,
+                                onClick = { newTypeDurationBased = true },
+                                label = { Text("Duration") }
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                if (newTypeName.isNotBlank()) {
+                                    if (editingType == null) {
+                                        prefs.addCustomType(newTypeName, newTypeDurationBased)
+                                    } else {
+                                        prefs.updateCustomType(editingType!!.id, newTypeName, newTypeDurationBased)
+                                        editingType = null
+                                    }
+                                    newTypeName = ""
+                                }
+                            },
+                            enabled = newTypeName.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (editingType == null) "Add Type" else "Update Type")
+                        }
+                        if (editingType != null) {
+                            TextButton(
+                                onClick = {
+                                    editingType = null
+                                    newTypeName = ""
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Cancel Edit")
+                            }
+                        }
+                    }
+                }
+
+                // Existing types list
+                Text("Saved Workout Types", fontWeight = FontWeight.Bold)
+                types.forEach { type ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(type.name, fontWeight = FontWeight.Medium)
+                                if (type.isCustom) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = MaterialTheme.shapes.extraSmall
+                                    ) {
+                                        Text("Custom", fontSize = 10.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                    }
+                                }
+                            }
+                            Text(
+                                if (type.isDurationBased) "Duration-based" else "Reps-based",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        if (type.isCustom) {
+                            IconButton(onClick = {
+                                editingType = type
+                                newTypeName = type.name
+                                newTypeDurationBased = type.isDurationBased
+                            }) {
+                                Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(20.dp))
+                            }
+                            IconButton(onClick = { prefs.deleteCustomType(type.id) }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    }
+                    Divider()
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Done")
+            }
+        }
+    )
 }
 
 private fun shareProfileStats(
-    context: android.content.Context,
+    context: Context,
     name: String,
     xp: Float,
     levelInfo: LevelSystem.LevelInfo,
@@ -1076,11 +1795,11 @@ private fun shareProfileStats(
 ) {
     val width = 800
     val height = 800
-    val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
-    val canvas = android.graphics.Canvas(bitmap)
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
     
     // Gradient Background
-    val paint = android.graphics.Paint().apply { isAntiAlias = true }
+    val paint = Paint().apply { isAntiAlias = true }
     val gradient = android.graphics.LinearGradient(
         0f, 0f, width.toFloat(), height.toFloat(),
         intArrayOf(android.graphics.Color.parseColor("#121212"), android.graphics.Color.parseColor("#2C2C2C")),
@@ -1093,7 +1812,7 @@ private fun shareProfileStats(
     // Text Paint
     paint.apply {
         color = android.graphics.Color.WHITE
-        textAlign = android.graphics.Paint.Align.CENTER
+        textAlign = Paint.Align.CENTER
         textSize = 70f
         typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
     }
@@ -1111,7 +1830,7 @@ private fun shareProfileStats(
     
     paint.color = android.graphics.Color.LTGRAY
     paint.textSize = 40f
-    canvas.drawText("Total XP: ${String.format(java.util.Locale.US, "%.2f", xp)}", width / 2f, 420f, paint)
+    canvas.drawText("Total XP: ${String.format(Locale.US, "%.2f", xp)}", width / 2f, 420f, paint)
     
     // Draw Stats Box
     paint.color = android.graphics.Color.parseColor("#333333")
@@ -1128,22 +1847,21 @@ private fun shareProfileStats(
     canvas.drawText("$highestStreak", 3 * width / 4f - 50f, 650f, paint)
     
     try {
-        val cachePath = java.io.File(context.cacheDir, "images")
+        val cachePath = File(context.cacheDir, "images")
         cachePath.mkdirs()
-        val file = java.io.File(cachePath, "profile_share.png")
-        val stream = java.io.FileOutputStream(file)
-        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+        val file = File(cachePath, "profile_share.png")
+        val stream = FileOutputStream(file)
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
         stream.close()
         
-        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
             type = "image/png"
-            putExtra(android.content.Intent.EXTRA_STREAM, uri)
-            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(android.content.Intent.createChooser(intent, "Share Profile"))
+        context.startActivity(Intent.createChooser(intent, "Share Profile"))
     } catch (e: Exception) {
         e.printStackTrace()
     }
 }
-

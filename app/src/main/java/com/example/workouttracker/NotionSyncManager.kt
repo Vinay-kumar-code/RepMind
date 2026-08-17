@@ -16,7 +16,11 @@ class NotionSyncManager(private val repo: SessionRepository) {
     private val client = OkHttpClient()
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    suspend fun syncUnsyncedSessions(apiKey: String, dbId: String): Result<Int> = withContext(Dispatchers.IO) {
+    suspend fun syncUnsyncedSessions(
+        apiKey: String, 
+        dbId: String,
+        onProgress: ((current: Int, total: Int) -> Unit)? = null
+    ): Result<Int> = withContext(Dispatchers.IO) {
         if (apiKey.isBlank() || dbId.isBlank()) return@withContext Result.failure(Exception("API Key or Database ID is empty"))
 
         try {
@@ -24,8 +28,10 @@ class NotionSyncManager(private val repo: SessionRepository) {
             if (unsynced.isEmpty()) return@withContext Result.success(0)
 
             val syncedIds = mutableListOf<Long>()
+            val total = unsynced.size
 
-            for (session in unsynced) {
+            for ((index, session) in unsynced.withIndex()) {
+                onProgress?.invoke(index + 1, total)
                 val json = JSONObject().apply {
                     put("parent", JSONObject().apply { put("database_id", dbId) })
                     put("properties", JSONObject().apply {
@@ -65,7 +71,11 @@ class NotionSyncManager(private val repo: SessionRepository) {
         }
     }
 
-    suspend fun retrieveAllSessions(apiKey: String, dbId: String): Result<Int> = withContext(Dispatchers.IO) {
+    suspend fun retrieveAllSessions(
+        apiKey: String, 
+        dbId: String,
+        onProgress: ((fetchedCount: Int) -> Unit)? = null
+    ): Result<Int> = withContext(Dispatchers.IO) {
         if (apiKey.isBlank() || dbId.isBlank()) return@withContext Result.failure(Exception("API Key or Database ID is empty"))
 
         try {
@@ -123,19 +133,20 @@ class NotionSyncManager(private val repo: SessionRepository) {
                             )
                         }
                     }
+                    onProgress?.invoke(fetchedSessions.size)
                 }
             }    
-                if (fetchedSessions.isNotEmpty()) {
-                    repo.resetAllProgress()
-                    repo.insertAllSessions(fetchedSessions)
-                    
-                    // Recalculate total XP
-                    var totalXp = 0f
-                    for (s in fetchedSessions) { totalXp += s.totalXp }
-                    repo.upsertProfile(totalXp)
-                }
+            if (fetchedSessions.isNotEmpty()) {
+                repo.resetAllProgress()
+                repo.insertAllSessions(fetchedSessions)
                 
-                Result.success(fetchedSessions.size)
+                // Recalculate total XP
+                var totalXp = 0f
+                for (s in fetchedSessions) { totalXp += s.totalXp }
+                repo.upsertProfile(totalXp)
+            }
+            
+            Result.success(fetchedSessions.size)
         } catch (e: Exception) {
             Result.failure(e)
         }

@@ -79,7 +79,10 @@ class WorkoutEngine(private val listener: Listener? = null) {
     private var stage = "up" // 'up' or 'down'
     private var reps = 0
     private var totalXp = 0f
-    var xpMultiplier = 1.0f // Applied to XP gains
+    var xpRates: XpRates = XpRates()
+    var xpMultiplier: Float
+        get() = xpRates.multiplier
+        set(value) { xpRates = xpRates.copy(multiplier = value) }
     private var lastRepTime = 0L
     private var lastTimestamp = 0L
 
@@ -187,7 +190,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
             val symmetryOk = haveBoth && abs(smoothLeft - smoothRight) <= symmetryToleranceDeg
             val intervalOk = (now - lastRepTime) >= minRepIntervalMs
             if (dwellOk && amplitudeOk && symmetryOk && intervalOk) {
-                incrementReps(now, 1f * LevelSystem.xpPerPushup())
+                incrementReps(now, 1f * LevelSystem.xpPerPushup(xpRates))
             }
             stage = "up"
             topReachTime = now
@@ -212,7 +215,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
                     val amplitude = cycleMaxAngle - cycleMinAngle
                     val amplitudeOk = amplitude >= (minPushAmplitudeDeg + 5f) // stricter single arm
                     val intervalOk = (now - lastRepTime) >= (minRepIntervalMs + 150L)
-                    if (dwellOk && amplitudeOk && intervalOk) incrementReps(now, 1f * LevelSystem.xpPerPushup())
+                    if (dwellOk && amplitudeOk && intervalOk) incrementReps(now, 1f * LevelSystem.xpPerPushup(xpRates))
                     stage = "up"; topReachTime = now; cycleMinAngle = arm; cycleMaxAngle = arm
                 }
             }
@@ -239,7 +242,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
         if (haveBoth) {
             if (smoothLeft < squatDownKneeAngle && smoothRight < squatDownKneeAngle && stage != "down") { stage="down"; cycleMinAngle=currentAvg; cycleMaxAngle=currentAvg }
             if (smoothLeft > squatUpKneeAngle && smoothRight > squatUpKneeAngle && stage=="down") {
-                if (now - lastRepTime >= minRepIntervalMs) incrementReps(now, 1f * LevelSystem.xpPerSquat())
+                if (now - lastRepTime >= minRepIntervalMs) incrementReps(now, 1f * LevelSystem.xpPerSquat(xpRates))
                 stage = "up"
             }
         } else {
@@ -247,7 +250,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
             if (!knee.isNaN()) {
                 if (knee < squatDownKneeAngle && stage != "down") { stage = "down"; cycleMinAngle=knee; cycleMaxAngle=knee }
                 if (knee > squatUpKneeAngle && stage == "down") {
-                    if (now - lastRepTime >= minRepIntervalMs) incrementReps(now, 1f * LevelSystem.xpPerSquat())
+                    if (now - lastRepTime >= minRepIntervalMs) incrementReps(now, 1f * LevelSystem.xpPerSquat(xpRates))
                     stage = "up"
                 }
             }
@@ -284,7 +287,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
             val ampOk = amp >= minCurlAmplitude
             val intervalOk = (now - lastRepTime) >= minRepIntervalMs
             if (dwellOk && ampOk && intervalOk) {
-                incrementReps(now, LevelSystem.xpPerBicepCurl())
+                incrementReps(now, LevelSystem.xpPerBicepCurl(xpRates))
             }
             stage = "up"
             topReachTime = now
@@ -322,7 +325,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
             stage = "down"; bottomReachTime = ts; cycleMinAngle = activeAngle; cycleMaxAngle = activeAngle
         }
         if (activeAngle > lungeUpAngle && stage == "down") {
-            if (ts - lastRepTime >= minRepIntervalMs) incrementReps(ts, LevelSystem.xpPerLunge())
+            if (ts - lastRepTime >= minRepIntervalMs) incrementReps(ts, LevelSystem.xpPerLunge(xpRates))
             stage = "up"
         }
         emitFeedback(smoothL, smoothR, ts)
@@ -357,7 +360,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
              stage = "down"; cycleMinAngle = avg; cycleMaxAngle = avg
         }
         if (avg > shoulderPressUpAngle && stage == "down") {
-             if (ts - lastRepTime >= minRepIntervalMs) incrementReps(ts, LevelSystem.xpPerShoulderPress())
+             if (ts - lastRepTime >= minRepIntervalMs) incrementReps(ts, LevelSystem.xpPerShoulderPress(xpRates))
              stage = "up"
         }
         emitFeedback(smoothL, smoothR, ts)
@@ -387,7 +390,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
             stage = "down" // Started/Reset
         }
         if (handsUp && stage == "down") {
-            if (ts - lastRepTime >= minRepIntervalMs) incrementReps(ts, LevelSystem.xpPerJumpingJack())
+            if (ts - lastRepTime >= minRepIntervalMs) incrementReps(ts, LevelSystem.xpPerJumpingJack(xpRates))
             stage = "up"
         }
         // Dummy angle for feedback
@@ -432,7 +435,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
             val shoulderMovedUp = (pullupBottomShoulderY - currentShoulderY) > 0.05f
             
             if (ts - lastRepTime >= minRepIntervalMs && shoulderMovedUp) {
-                incrementReps(ts, LevelSystem.xpPerPullup())
+                incrementReps(ts, LevelSystem.xpPerPullup(xpRates))
             }
             stage = "up"
         }

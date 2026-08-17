@@ -4,6 +4,8 @@ class SessionRepository(private val dao: SessionDao) {
     
     suspend fun insertSession(session: SessionEntity): Long = dao.insert(session)
     
+    suspend fun updateSession(session: SessionEntity) = dao.update(session)
+    
     suspend fun getAllSessions(): List<SessionEntity> = dao.getAll()
     
     suspend fun getSessionById(id: Long): SessionEntity? = dao.getById(id)
