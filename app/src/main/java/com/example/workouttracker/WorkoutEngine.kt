@@ -16,11 +16,14 @@ class WorkoutEngine(private val listener: Listener? = null) {
         fun onFrameFeedback(feedback: Feedback) {}
     }
 
-    enum class ExerciseType { PUSHUP, SQUAT, BICEP_LEFT, BICEP_RIGHT, LUNGES, SHOULDER_PRESS, JUMPING_JACKS, PULLUP }
+    enum class ExerciseType { 
+        PUSHUP, SQUAT, BICEP_LEFT, BICEP_RIGHT, LUNGES, SHOULDER_PRESS, JUMPING_JACKS, PULLUP,
+        LATERAL_RAISES, GLUTE_BRIDGES, CRUNCHES, TRICEP_DIPS, HIGH_KNEES, LEG_RAISES, PLANK 
+    }
 
     data class Feedback(
         val reps: Int,
-        val stage: String,          // 'up' or 'down'
+        val stage: String,          // 'up' or 'down' or 'holding'
         val leftAngle: Float,
         val rightAngle: Float,
         val avgAngle: Float,
@@ -66,12 +69,28 @@ class WorkoutEngine(private val listener: Listener? = null) {
     private var lungeUpAngle = 160f
     private var shoulderPressDownAngle = 70f // Elbow angle
     private var shoulderPressUpAngle = 150f
-    private var plankThresholdDeg = 15f // Deviation from straight line
-    private var cobraThresholdDeg = 130f // Hip extension angle
+    private var plankThresholdDeg = 18f // Deviation from straight line
     private var jumpingJackArmAngle = 150f // Shoulder abduction
     private var pullupDownAngle = 150f
     private var pullupUpAngle = 90f
     private var pullupBottomShoulderY = 0f
+
+    // Additional Workouts Parameters
+    private var lateralRaiseDownAngle = 30f
+    private var lateralRaiseUpAngle = 80f
+    private var gluteBridgeDownAngle = 135f
+    private var gluteBridgeUpAngle = 165f
+    private var crunchDownAngle = 140f
+    private var crunchUpAngle = 100f
+    private var tricepDipDownAngle = 95f
+    private var tricepDipUpAngle = 155f
+    private var legRaiseDownAngle = 155f
+    private var legRaiseUpAngle = 105f
+
+    // Plank Hold State
+    private var lastPlankSecondLoggedMs = 0L
+    private var plankActiveHold = false
+    private var highKneeActiveLeg = "none" // "left" or "right"
 
     private val leftAngles = ArrayDeque<Float>()
     private val rightAngles = ArrayDeque<Float>()
@@ -110,8 +129,8 @@ class WorkoutEngine(private val listener: Listener? = null) {
             exercise = type
             when(type) {
                 ExerciseType.PUSHUP -> { downAngleThreshold = 100f; upAngleThreshold = 160f; minRepIntervalMs = 600L }
-                ExerciseType.SQUAT -> { // use knee angle thresholds
-                    squatDownKneeAngle = 100f // knee angle smaller = deeper squat; treat <100 as down
+                ExerciseType.SQUAT -> {
+                    squatDownKneeAngle = 100f
                     squatUpKneeAngle = 170f
                     minRepIntervalMs = 700L
                 }
@@ -122,6 +141,13 @@ class WorkoutEngine(private val listener: Listener? = null) {
                 ExerciseType.SHOULDER_PRESS -> { minRepIntervalMs = 600L }
                 ExerciseType.JUMPING_JACKS -> { minRepIntervalMs = 500L }
                 ExerciseType.PULLUP -> { minRepIntervalMs = 800L }
+                ExerciseType.LATERAL_RAISES -> { minRepIntervalMs = 600L }
+                ExerciseType.GLUTE_BRIDGES -> { minRepIntervalMs = 700L }
+                ExerciseType.CRUNCHES -> { minRepIntervalMs = 600L }
+                ExerciseType.TRICEP_DIPS -> { minRepIntervalMs = 600L }
+                ExerciseType.HIGH_KNEES -> { minRepIntervalMs = 350L }
+                ExerciseType.LEG_RAISES -> { minRepIntervalMs = 800L }
+                ExerciseType.PLANK -> { minRepIntervalMs = 1000L }
             }
         }
     }
@@ -142,6 +168,13 @@ class WorkoutEngine(private val listener: Listener? = null) {
                 ExerciseType.SHOULDER_PRESS -> processShoulderPress(landmarks, nowIst)
                 ExerciseType.JUMPING_JACKS -> processJumpingJacks(landmarks, nowIst)
                 ExerciseType.PULLUP -> processPullup(landmarks, nowIst)
+                ExerciseType.LATERAL_RAISES -> processLateralRaises(landmarks, nowIst)
+                ExerciseType.GLUTE_BRIDGES -> processGluteBridges(landmarks, nowIst)
+                ExerciseType.CRUNCHES -> processCrunches(landmarks, nowIst)
+                ExerciseType.TRICEP_DIPS -> processTricepDips(landmarks, nowIst)
+                ExerciseType.HIGH_KNEES -> processHighKnees(landmarks, nowIst)
+                ExerciseType.LEG_RAISES -> processLegRaises(landmarks, nowIst)
+                ExerciseType.PLANK -> processPlank(landmarks, nowIst)
             }
         } catch (_: Exception) {}
     }
@@ -443,6 +476,230 @@ class WorkoutEngine(private val listener: Listener? = null) {
         emitFeedback(smoothL, smoothR, ts)
     }
 
+    private fun processLateralRaises(lm: List<FloatArray>, ts: Long) {
+        val lVis = visible(lm, LEFT_HIP, LEFT_SHOULDER, LEFT_ELBOW)
+        val rVis = visible(lm, RIGHT_HIP, RIGHT_SHOULDER, RIGHT_ELBOW)
+        if (!lVis && !rVis) { emitFeedback(Float.NaN, Float.NaN, ts); return }
+
+        val lAngle = if (lVis) calculateAngle(lm[LEFT_HIP], lm[LEFT_SHOULDER], lm[LEFT_ELBOW]) else Float.NaN
+        val rAngle = if (rVis) calculateAngle(lm[RIGHT_HIP], lm[RIGHT_SHOULDER], lm[RIGHT_ELBOW]) else Float.NaN
+
+        pushAngle(leftAngles, lAngle)
+        pushAngle(rightAngles, rAngle)
+
+        val smoothL = if (leftAngles.isEmpty()) Float.NaN else leftAngles.average().toFloat()
+        val smoothR = if (rightAngles.isEmpty()) Float.NaN else rightAngles.average().toFloat()
+        val avg = listOf(smoothL, smoothR).filter { !it.isNaN() }.average().toFloat()
+
+        cycleMinAngle = min(cycleMinAngle, avg)
+        cycleMaxAngle = max(cycleMaxAngle, avg)
+
+        if (avg < lateralRaiseDownAngle && stage != "down") {
+            stage = "down"
+            cycleMinAngle = avg; cycleMaxAngle = avg
+        }
+        if (avg > lateralRaiseUpAngle && stage == "down") {
+            if (ts - lastRepTime >= minRepIntervalMs) {
+                incrementReps(ts, LevelSystem.xpPerLateralRaise(xpRates))
+            }
+            stage = "up"
+        }
+        emitFeedback(smoothL, smoothR, ts)
+    }
+
+    private fun processGluteBridges(lm: List<FloatArray>, ts: Long) {
+        val lVis = visible(lm, LEFT_SHOULDER, LEFT_HIP, LEFT_KNEE)
+        val rVis = visible(lm, RIGHT_SHOULDER, RIGHT_HIP, RIGHT_KNEE)
+        if (!lVis && !rVis) { emitFeedback(Float.NaN, Float.NaN, ts); return }
+
+        val lAngle = if (lVis) calculateAngle(lm[LEFT_SHOULDER], lm[LEFT_HIP], lm[LEFT_KNEE]) else Float.NaN
+        val rAngle = if (rVis) calculateAngle(lm[RIGHT_SHOULDER], lm[RIGHT_HIP], lm[RIGHT_KNEE]) else Float.NaN
+
+        pushAngle(leftAngles, lAngle)
+        pushAngle(rightAngles, rAngle)
+
+        val smoothL = if (leftAngles.isEmpty()) Float.NaN else leftAngles.average().toFloat()
+        val smoothR = if (rightAngles.isEmpty()) Float.NaN else rightAngles.average().toFloat()
+        val avg = listOf(smoothL, smoothR).filter { !it.isNaN() }.average().toFloat()
+
+        cycleMinAngle = min(cycleMinAngle, avg)
+        cycleMaxAngle = max(cycleMaxAngle, avg)
+
+        if (avg < gluteBridgeDownAngle && stage != "down") {
+            stage = "down"
+            cycleMinAngle = avg; cycleMaxAngle = avg
+        }
+        if (avg > gluteBridgeUpAngle && stage == "down") {
+            if (ts - lastRepTime >= minRepIntervalMs) {
+                incrementReps(ts, LevelSystem.xpPerGluteBridge(xpRates))
+            }
+            stage = "up"
+        }
+        emitFeedback(smoothL, smoothR, ts)
+    }
+
+    private fun processCrunches(lm: List<FloatArray>, ts: Long) {
+        val lVis = visible(lm, LEFT_SHOULDER, LEFT_HIP, LEFT_KNEE)
+        val rVis = visible(lm, RIGHT_SHOULDER, RIGHT_HIP, RIGHT_KNEE)
+        if (!lVis && !rVis) { emitFeedback(Float.NaN, Float.NaN, ts); return }
+
+        val lAngle = if (lVis) calculateAngle(lm[LEFT_SHOULDER], lm[LEFT_HIP], lm[LEFT_KNEE]) else Float.NaN
+        val rAngle = if (rVis) calculateAngle(lm[RIGHT_SHOULDER], lm[RIGHT_HIP], lm[RIGHT_KNEE]) else Float.NaN
+
+        pushAngle(leftAngles, lAngle)
+        pushAngle(rightAngles, rAngle)
+
+        val smoothL = if (leftAngles.isEmpty()) Float.NaN else leftAngles.average().toFloat()
+        val smoothR = if (rightAngles.isEmpty()) Float.NaN else rightAngles.average().toFloat()
+        val avg = listOf(smoothL, smoothR).filter { !it.isNaN() }.average().toFloat()
+
+        cycleMinAngle = min(cycleMinAngle, avg)
+        cycleMaxAngle = max(cycleMaxAngle, avg)
+
+        if (avg > crunchDownAngle && stage != "down") {
+            stage = "down"
+            cycleMinAngle = avg; cycleMaxAngle = avg
+        }
+        if (avg < crunchUpAngle && stage == "down") {
+            if (ts - lastRepTime >= minRepIntervalMs) {
+                incrementReps(ts, LevelSystem.xpPerCrunch(xpRates))
+            }
+            stage = "up"
+        }
+        emitFeedback(smoothL, smoothR, ts)
+    }
+
+    private fun processTricepDips(lm: List<FloatArray>, ts: Long) {
+        val lVis = visible(lm, LEFT_SHOULDER, LEFT_ELBOW, LEFT_WRIST)
+        val rVis = visible(lm, RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST)
+        if (!lVis && !rVis) { emitFeedback(Float.NaN, Float.NaN, ts); return }
+
+        val lAngle = if (lVis) calculateAngle(lm[LEFT_SHOULDER], lm[LEFT_ELBOW], lm[LEFT_WRIST]) else Float.NaN
+        val rAngle = if (rVis) calculateAngle(lm[RIGHT_SHOULDER], lm[RIGHT_ELBOW], lm[RIGHT_WRIST]) else Float.NaN
+
+        pushAngle(leftAngles, lAngle)
+        pushAngle(rightAngles, rAngle)
+
+        val smoothL = if (leftAngles.isEmpty()) Float.NaN else leftAngles.average().toFloat()
+        val smoothR = if (rightAngles.isEmpty()) Float.NaN else rightAngles.average().toFloat()
+        val avg = listOf(smoothL, smoothR).filter { !it.isNaN() }.average().toFloat()
+
+        cycleMinAngle = min(cycleMinAngle, avg)
+        cycleMaxAngle = max(cycleMaxAngle, avg)
+
+        if (avg < tricepDipDownAngle && stage != "down") {
+            stage = "down"
+            cycleMinAngle = avg; cycleMaxAngle = avg
+        }
+        if (avg > tricepDipUpAngle && stage == "down") {
+            if (ts - lastRepTime >= minRepIntervalMs) {
+                incrementReps(ts, LevelSystem.xpPerTricepDip(xpRates))
+            }
+            stage = "up"
+        }
+        emitFeedback(smoothL, smoothR, ts)
+    }
+
+    private fun processHighKnees(lm: List<FloatArray>, ts: Long) {
+        val lVis = visible(lm, LEFT_HIP, LEFT_KNEE, LEFT_ANKLE)
+        val rVis = visible(lm, RIGHT_HIP, RIGHT_KNEE, RIGHT_ANKLE)
+        if (!lVis && !rVis) { emitFeedback(Float.NaN, Float.NaN, ts); return }
+
+        val lKneeY = if (lVis) lm[LEFT_KNEE][1] else Float.NaN
+        val lHipY = if (lVis) lm[LEFT_HIP][1] else Float.NaN
+        val rKneeY = if (rVis) lm[RIGHT_KNEE][1] else Float.NaN
+        val rHipY = if (rVis) lm[RIGHT_HIP][1] else Float.NaN
+
+        val lKneeUp = lVis && (lKneeY <= lHipY + 0.08f)
+        val rKneeUp = rVis && (rKneeY <= rHipY + 0.08f)
+
+        if (lKneeUp && highKneeActiveLeg != "left") {
+            if (ts - lastRepTime >= minRepIntervalMs) {
+                incrementReps(ts, LevelSystem.xpPerHighKnee(xpRates))
+                highKneeActiveLeg = "left"
+            }
+        } else if (rKneeUp && highKneeActiveLeg != "right") {
+            if (ts - lastRepTime >= minRepIntervalMs) {
+                incrementReps(ts, LevelSystem.xpPerHighKnee(xpRates))
+                highKneeActiveLeg = "right"
+            }
+        } else if (!lKneeUp && !rKneeUp) {
+            highKneeActiveLeg = "none"
+        }
+
+        emitFeedback(if (lKneeUp) 180f else 90f, if (rKneeUp) 180f else 90f, ts)
+    }
+
+    private fun processLegRaises(lm: List<FloatArray>, ts: Long) {
+        val lVis = visible(lm, LEFT_SHOULDER, LEFT_HIP, LEFT_ANKLE)
+        val rVis = visible(lm, RIGHT_SHOULDER, RIGHT_HIP, RIGHT_ANKLE)
+        if (!lVis && !rVis) { emitFeedback(Float.NaN, Float.NaN, ts); return }
+
+        val lAngle = if (lVis) calculateAngle(lm[LEFT_SHOULDER], lm[LEFT_HIP], lm[LEFT_ANKLE]) else Float.NaN
+        val rAngle = if (rVis) calculateAngle(lm[RIGHT_SHOULDER], lm[RIGHT_HIP], lm[RIGHT_ANKLE]) else Float.NaN
+
+        pushAngle(leftAngles, lAngle)
+        pushAngle(rightAngles, rAngle)
+
+        val smoothL = if (leftAngles.isEmpty()) Float.NaN else leftAngles.average().toFloat()
+        val smoothR = if (rightAngles.isEmpty()) Float.NaN else rightAngles.average().toFloat()
+        val avg = listOf(smoothL, smoothR).filter { !it.isNaN() }.average().toFloat()
+
+        cycleMinAngle = min(cycleMinAngle, avg)
+        cycleMaxAngle = max(cycleMaxAngle, avg)
+
+        if (avg > legRaiseDownAngle && stage != "down") {
+            stage = "down"
+            cycleMinAngle = avg; cycleMaxAngle = avg
+        }
+        if (avg < legRaiseUpAngle && stage == "down") {
+            if (ts - lastRepTime >= minRepIntervalMs) {
+                incrementReps(ts, LevelSystem.xpPerLegRaise(xpRates))
+            }
+            stage = "up"
+        }
+        emitFeedback(smoothL, smoothR, ts)
+    }
+
+    private fun processPlank(lm: List<FloatArray>, ts: Long) {
+        val lVis = visible(lm, LEFT_SHOULDER, LEFT_HIP, LEFT_ANKLE)
+        val rVis = visible(lm, RIGHT_SHOULDER, RIGHT_HIP, RIGHT_ANKLE)
+        if (!lVis && !rVis) { emitFeedback(Float.NaN, Float.NaN, ts); return }
+
+        val lAngle = if (lVis) calculateAngle(lm[LEFT_SHOULDER], lm[LEFT_HIP], lm[LEFT_ANKLE]) else Float.NaN
+        val rAngle = if (rVis) calculateAngle(lm[RIGHT_SHOULDER], lm[RIGHT_HIP], lm[RIGHT_ANKLE]) else Float.NaN
+
+        pushAngle(leftAngles, lAngle)
+        pushAngle(rightAngles, rAngle)
+
+        val smoothL = if (leftAngles.isEmpty()) Float.NaN else leftAngles.average().toFloat()
+        val smoothR = if (rightAngles.isEmpty()) Float.NaN else rightAngles.average().toFloat()
+        val avg = listOf(smoothL, smoothR).filter { !it.isNaN() }.average().toFloat()
+
+        val deviation = abs(180f - avg)
+        val isHorizontal = (lVis && abs(lm[LEFT_SHOULDER][1] - lm[LEFT_ANKLE][1]) < 0.35f) ||
+                           (rVis && abs(lm[RIGHT_SHOULDER][1] - lm[RIGHT_ANKLE][1]) < 0.35f)
+
+        val isGoodForm = deviation <= plankThresholdDeg && isHorizontal
+
+        if (isGoodForm) {
+            stage = "holding"
+            plankActiveHold = true
+            if (lastPlankSecondLoggedMs == 0L) {
+                lastPlankSecondLoggedMs = ts
+            } else if (ts - lastPlankSecondLoggedMs >= 1000L) {
+                lastPlankSecondLoggedMs = ts
+                incrementReps(ts, LevelSystem.xpPerPlankSecond(xpRates))
+            }
+        } else {
+            stage = if (deviation > plankThresholdDeg) "misaligned" else "ready"
+            plankActiveHold = false
+            lastPlankSecondLoggedMs = ts
+        }
+
+        emitFeedback(smoothL, smoothR, ts)
+    }
+
     private fun visible(lm: List<FloatArray>, a: Int, b: Int, c: Int): Boolean =
         lm[a][2] > VISIBILITY_THRESHOLD && lm[b][2] > VISIBILITY_THRESHOLD && lm[c][2] > VISIBILITY_THRESHOLD
 
@@ -468,6 +725,13 @@ class WorkoutEngine(private val listener: Listener? = null) {
             ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT, ExerciseType.SHOULDER_PRESS -> (((curlUpAngle - avg) / (curlUpAngle - curlDownAngle).coerceAtLeast(1f) *100f).coerceIn(0f,100f)).toInt()
             ExerciseType.JUMPING_JACKS -> if (avg > 90) 100 else 0
             ExerciseType.PULLUP -> (((pullupDownAngle - avg) / (pullupDownAngle - pullupUpAngle).coerceAtLeast(1f) *100f).coerceIn(0f,100f)).toInt()
+            ExerciseType.LATERAL_RAISES -> (((avg - lateralRaiseDownAngle) / (lateralRaiseUpAngle - lateralRaiseDownAngle).coerceAtLeast(1f) * 100f).coerceIn(0f, 100f)).toInt()
+            ExerciseType.GLUTE_BRIDGES -> (((avg - gluteBridgeDownAngle) / (gluteBridgeUpAngle - gluteBridgeDownAngle).coerceAtLeast(1f) * 100f).coerceIn(0f, 100f)).toInt()
+            ExerciseType.CRUNCHES -> (((crunchDownAngle - avg) / (crunchDownAngle - crunchUpAngle).coerceAtLeast(1f) * 100f).coerceIn(0f, 100f)).toInt()
+            ExerciseType.TRICEP_DIPS -> (((tricepDipUpAngle - avg) / (tricepDipUpAngle - tricepDipDownAngle).coerceAtLeast(1f) * 100f).coerceIn(0f, 100f)).toInt()
+            ExerciseType.HIGH_KNEES -> if (highKneeActiveLeg != "none") 100 else 0
+            ExerciseType.LEG_RAISES -> (((legRaiseDownAngle - avg) / (legRaiseDownAngle - legRaiseUpAngle).coerceAtLeast(1f) * 100f).coerceIn(0f, 100f)).toInt()
+            ExerciseType.PLANK -> ((1f - (abs(180f - avg) / 25f).coerceIn(0f, 1f)) * 100f).toInt()
             else -> 0
         }
         val amplitude = (cycleMaxAngle - cycleMinAngle).coerceAtLeast(0f)
@@ -478,9 +742,16 @@ class WorkoutEngine(private val listener: Listener? = null) {
             ExerciseType.SHOULDER_PRESS -> avg < shoulderPressDownAngle
             ExerciseType.JUMPING_JACKS -> avg > 150f
             ExerciseType.PULLUP -> avg < pullupUpAngle
+            ExerciseType.LATERAL_RAISES -> avg > lateralRaiseUpAngle
+            ExerciseType.GLUTE_BRIDGES -> avg > gluteBridgeUpAngle
+            ExerciseType.CRUNCHES -> avg < crunchUpAngle
+            ExerciseType.TRICEP_DIPS -> avg < tricepDipDownAngle
+            ExerciseType.HIGH_KNEES -> highKneeActiveLeg != "none"
+            ExerciseType.LEG_RAISES -> avg < legRaiseUpAngle
+            ExerciseType.PLANK -> abs(180f - avg) <= plankThresholdDeg
             else -> false
         }
-        val repImminent = (stage=="down")
+        val repImminent = (stage=="down" || stage=="holding")
         lastFeedback = Feedback(
             reps = reps,
             stage = stage,
@@ -497,6 +768,8 @@ class WorkoutEngine(private val listener: Listener? = null) {
                 ExerciseType.SQUAT, ExerciseType.LUNGES -> amplitude >= 15f
                 ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT, ExerciseType.SHOULDER_PRESS -> amplitude >= minCurlAmplitude
                 ExerciseType.PULLUP -> amplitude >= 30f
+                ExerciseType.LATERAL_RAISES, ExerciseType.GLUTE_BRIDGES, ExerciseType.CRUNCHES, ExerciseType.TRICEP_DIPS, ExerciseType.LEG_RAISES -> amplitude >= 20f
+                ExerciseType.PLANK -> abs(180f - avg) <= plankThresholdDeg
                 else -> true
             },
             exercise = exercise
@@ -528,6 +801,7 @@ class WorkoutEngine(private val listener: Listener? = null) {
         reps = 0; totalXp = 0f; stage = "up"; lastRepTime = 0L
         leftAngles.clear(); rightAngles.clear(); cycleMinAngle = 180f; cycleMaxAngle = 0f
         bottomReachTime = 0L; topReachTime = 0L; lastTimestamp = 0L
+        lastPlankSecondLoggedMs = 0L; plankActiveHold = false; highKneeActiveLeg = "none"
         lastFeedback = Feedback(0,"up",180f,180f,180f,0,0,false,false,0f,true, exercise)
         resetCallbacks.forEach { it.invoke() }
         listener?.onRepCountUpdated(reps); listener?.onXpUpdated(totalXp)

@@ -100,7 +100,8 @@ fun HistoryScreen(
     fun refreshSessions() {
         coroutineScope.launch {
             val sessions = withContext(Dispatchers.IO) { repo.getAllSessions() }
-            allSessions = sessions.sortedByDescending { it.timestampIso }
+            allSessions = sessions.filter { !it.exercise.startsWith("Achievement", ignoreCase = true) }
+                .sortedByDescending { it.timestampIso }
             isLoading = false
         }
     }

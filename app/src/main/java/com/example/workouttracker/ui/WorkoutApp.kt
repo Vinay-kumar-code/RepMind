@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -20,6 +22,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -40,6 +43,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.workouttracker.R
 import com.example.workouttracker.*
 import com.example.workouttracker.WorkoutEngine.ExerciseType
+import com.example.workouttracker.alarm.*
 import com.example.workouttracker.db.SessionEntity
 import com.example.workouttracker.db.SessionRepository
 import kotlinx.coroutines.CoroutineScope
@@ -61,7 +65,10 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    val progressManager = remember { ProgressManager(repo, appScope) }
+    val streakPrefs = remember { StreakPreferences(context) }
+    val hardAlarmManager = remember { HardAlarmManager(context) }
+    val achievementManager = remember { AchievementManager(context) }
+    val progressManager = remember { ProgressManager(repo, appScope, streakPrefs) }
     val manualWorkoutPrefs = remember { ManualWorkoutPreferences(context) }
     val xpPrefs = remember { XpPreferences(context) }
     
@@ -69,6 +76,8 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     val themeMode by themePrefs.themeMode.collectAsState()
     val useMaterialYou by themePrefs.useMaterialYou.collectAsState()
     val xpRates by xpPrefs.rates.collectAsState()
+    val alarmConfig by hardAlarmManager.config.collectAsState()
+    val streakInfo by streakPrefs.streakInfo.collectAsState()
 
     var profileXp by remember { mutableStateOf(0f) }
     var levelInfo by remember { mutableStateOf(LevelSystem.levelFromXp(0f)) }
@@ -80,6 +89,8 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     var customPushGoal by remember { mutableStateOf(10) }
     var customSquatGoal by remember { mutableStateOf(10) }
     var customBicepGoal by remember { mutableStateOf(60) }
+    var notionApiKey by remember { mutableStateOf("") }
+    var notionDbId by remember { mutableStateOf("") }
 
     // Settings State
     var showLandmarks by remember { mutableStateOf(false) }
@@ -90,30 +101,35 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     var hcStepsToday by remember { mutableStateOf(0L) }
 
     val hcPermissionLauncher = rememberLauncherForActivityResult(
-        PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
-        if (granted.containsAll(healthConnectManager.permissions)) {
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { grantedMap ->
+        val grantedCount = grantedMap.count { it.value }
+        if (grantedCount > 0) {
             hcConnected = true
             appScope.launch(Dispatchers.IO) {
-                hcStepsToday = healthConnectManager.getTodaySteps()
-                healthConnectManager.syncFromHealthConnect(xpRates)
-                
-                // Refresh profile after sync
-                val newProf = repo.getProfile()
-                withContext(Dispatchers.Main) {
-                    profileXp = newProf?.totalXp ?: 0f
-                    levelInfo = LevelSystem.levelFromXp(profileXp)
-                    progressManager.recalculateDailyProgress()
-                    progressManager.load(levelInfo, profileXp, newProf)
+                try {
+                    hcStepsToday = healthConnectManager.getTodaySteps()
+                    healthConnectManager.syncFromHealthConnect(xpRates)
+                    
+                    val newProf = repo.getProfile()
+                    withContext(Dispatchers.Main) {
+                        profileXp = newProf?.totalXp ?: 0f
+                        levelInfo = LevelSystem.levelFromXp(profileXp)
+                        progressManager.recalculateDailyProgress()
+                        progressManager.load(levelInfo, profileXp, newProf)
+                    }
+                } catch (e: Throwable) {
+                    e.printStackTrace()
                 }
             }
         }
     }
 
-    // Auto refresh Health Connect permissions on app resume
+    // Auto refresh Health Connect permissions on app resume & schedule nightly step sync
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                StepSyncScheduler.scheduleDailySync(context)
                 if (healthConnectManager.isSupported) {
                     appScope.launch(Dispatchers.IO) {
                         val hasPerms = healthConnectManager.hasPermissions()
@@ -135,27 +151,38 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     }
 
     LaunchedEffect(Unit) {
-        val currentProf = withContext(Dispatchers.IO) { repo.getProfile() }
-        profileXp = currentProf?.totalXp ?: 0f
-        levelInfo = LevelSystem.levelFromXp(profileXp)
-        profileName = currentProf?.name ?: ""
-        useCustomGoals = currentProf?.useCustomGoals ?: false
-        customPushGoal = currentProf?.customPushGoal ?: 10
-        customSquatGoal = currentProf?.customSquatGoal ?: 10
-        customBicepGoal = currentProf?.customBicepGoal ?: 60
-        progressManager.load(levelInfo, profileXp, currentProf)
-        
-        if (healthConnectManager.isSupported) {
-            hcConnected = healthConnectManager.hasPermissions()
-            if (hcConnected) {
-                hcStepsToday = healthConnectManager.getTodaySteps()
-                healthConnectManager.syncFromHealthConnect(xpRates)
-                val notionApiKey = currentProf?.notionApiKey ?: ""
-                val notionDbId = currentProf?.notionDbId ?: ""
-                if (notionApiKey.isNotEmpty() && notionDbId.isNotEmpty()) {
-                    NotionSyncManager(repo).syncUnsyncedSessions(notionApiKey, notionDbId)
+        try {
+            StepSyncScheduler.scheduleDailySync(context)
+            val currentProf = withContext(Dispatchers.IO) { repo.getProfile() }
+            profileXp = currentProf?.totalXp ?: 0f
+            levelInfo = LevelSystem.levelFromXp(profileXp)
+            profileName = currentProf?.name ?: ""
+            useCustomGoals = currentProf?.useCustomGoals ?: false
+            customPushGoal = currentProf?.customPushGoal ?: 10
+            customSquatGoal = currentProf?.customSquatGoal ?: 10
+            customBicepGoal = currentProf?.customBicepGoal ?: 60
+            notionApiKey = currentProf?.notionApiKey ?: ""
+            notionDbId = currentProf?.notionDbId ?: ""
+            progressManager.load(levelInfo, profileXp, currentProf)
+            startDestination = if (profileName.isBlank()) "onboarding" else "dashboard"
+
+            if (healthConnectManager.isSupported) {
+                try {
+                    hcConnected = healthConnectManager.hasPermissions()
+                    if (hcConnected) {
+                        hcStepsToday = healthConnectManager.getTodaySteps()
+                        healthConnectManager.syncFromHealthConnect(xpRates)
+                        if (notionApiKey.isNotEmpty() && notionDbId.isNotEmpty()) {
+                            NotionSyncManager(repo).syncUnsyncedSessions(notionApiKey, notionDbId)
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            startDestination = "dashboard"
         }
     }
 
@@ -218,24 +245,6 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
         engine.xpRates = xpRates
     }
 
-    var notionApiKey by remember { mutableStateOf("") }
-    var notionDbId by remember { mutableStateOf("") }
-
-    LaunchedEffect(Unit) {
-        val prof = withContext(Dispatchers.IO) { repo.getProfile() }
-        profileXp = prof?.totalXp ?: 0f
-        profileName = prof?.name ?: ""
-        useCustomGoals = prof?.useCustomGoals ?: false
-        customPushGoal = prof?.customPushGoal ?: 10
-        customSquatGoal = prof?.customSquatGoal ?: 10
-        customBicepGoal = prof?.customBicepGoal ?: 60
-        notionApiKey = prof?.notionApiKey ?: ""
-        notionDbId = prof?.notionDbId ?: ""
-        levelInfo = LevelSystem.levelFromXp(profileXp)
-        progressManager.load(levelInfo, profileXp, prof)
-        startDestination = if (profileName.isBlank()) "onboarding" else "dashboard"
-    }
-
     if (startDestination == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
@@ -270,73 +279,120 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
             }
         }
     ) { inner ->
-        NavHost(navController = nav, startDestination = startDestination!!, modifier = Modifier.padding(inner)) {
-            composable("onboarding") {
-                OnboardingScreen(onContinue = { name ->
-                    profileName = name
-                    appScope.launch(Dispatchers.IO) { repo.updateName(name) }
-                    nav.navigate("dashboard") { popUpTo("onboarding") { inclusive = true } }
-                })
-            }
-            composable("dashboard") {
-                DashboardScreen(
-                    repo = repo,
-                    engine = engine,
-                    onStartWorkout = { nav.navigate("session") },
-                    dailyState = dailyState,
-                    levelInfo = levelInfo,
-                    userName = profileName,
-                    onNavigateToSettings = { nav.navigate("settings") },
-                    progressManager = progressManager
-                )
-            }
-            composable("workouts") { WorkoutsScreen(onStart = { type -> engine.setExerciseType(type); nav.navigate("session") }) }
-            composable("profile") { 
-                ProfileScreen(
-                    name = profileName, 
-                    levelInfo = levelInfo, 
-                    repo = repo, 
-                    todaySteps = hcStepsToday,
-                    isHealthConnectAvailable = healthConnectManager.isSupported,
-                    isHealthConnectConnected = hcConnected,
-                    onNameChange = { new -> profileName = new; appScope.launch(Dispatchers.IO) { repo.updateName(new) } },
-                    onViewHistory = { nav.navigate("history") }
-                ) 
-            }
-            composable("settings") {
-                var showManualDialog by remember { mutableStateOf(false) }
-                var highestStreak by remember { mutableStateOf(0) }
-                
-                LaunchedEffect(Unit) {
-                    val allDaily = withContext(Dispatchers.IO) { repo.getRecentDaily(10000).sortedBy { it.date } }
-                    var maxS = 0
-                    var currentS = 0
-                    var lastDate: LocalDate? = null
-
-                    for (dp in allDaily) {
-                        if (dp.goalsMet) {
-                            val d = LocalDate.parse(dp.date)
-                            if (lastDate == null || d == lastDate.plusDays(1)) {
-                                currentS++
-                            } else if (d != lastDate) {
-                                currentS = 1
-                            }
-                            if (currentS > maxS) maxS = currentS
-                            lastDate = d
+        Column(Modifier.padding(inner).fillMaxSize()) {
+            if (alarmConfig.isRinging) {
+                Surface(
+                    color = Color(0xFFD32F2F),
+                    shape = RoundedCornerShape(0.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { nav.navigate("settings") }
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 12.dp).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("🚨 HARD WORKOUT ALARM ACTIVE", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Auto-track your target workouts to dismiss!", color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp)
+                        }
+                        Button(
+                            onClick = { nav.navigate("settings") },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFFD32F2F)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Text("Verify", fontWeight = FontWeight.Bold)
                         }
                     }
-                    highestStreak = maxS
                 }
-                
-                SettingsScreen(
-                    showLandmarks = showLandmarks,
-                    themeMode = themeMode,
-                    useMaterialYou = useMaterialYou,
-                    isHealthConnectAvailable = healthConnectManager.isSupported,
-                    isHealthConnectConnected = hcConnected,
+            }
+
+            NavHost(navController = nav, startDestination = startDestination!!, modifier = Modifier.weight(1f)) {
+                composable("onboarding") {
+                    OnboardingScreen(onContinue = { name ->
+                        profileName = name
+                        appScope.launch(Dispatchers.IO) { repo.updateName(name) }
+                        nav.navigate("dashboard") { popUpTo("onboarding") { inclusive = true } }
+                    })
+                }
+                composable("dashboard") {
+                    DashboardScreen(
+                        repo = repo,
+                        engine = engine,
+                        onStartWorkout = { nav.navigate("session") },
+                        dailyState = dailyState,
+                        levelInfo = levelInfo,
+                        userName = profileName,
+                        onNavigateToSettings = { nav.navigate("settings") },
+                        progressManager = progressManager
+                    )
+                }
+                composable("workouts") { WorkoutsScreen(onStart = { type -> engine.setExerciseType(type); nav.navigate("session") }) }
+                composable("profile") { 
+                    ProfileScreen(
+                        name = profileName, 
+                        levelInfo = levelInfo, 
+                        repo = repo, 
+                        todaySteps = hcStepsToday,
+                        isHealthConnectAvailable = healthConnectManager.isSupported,
+                        isHealthConnectConnected = hcConnected,
+                        healthConnectManager = healthConnectManager,
+                        achievementManager = achievementManager,
+                        streakPrefs = streakPrefs,
+                        streakInfo = streakInfo,
+                        onNameChange = { new -> profileName = new; appScope.launch(Dispatchers.IO) { repo.updateName(new) } },
+                        onXpEarned = { newXp ->
+                            profileXp = newXp
+                            levelInfo = LevelSystem.levelFromXp(newXp)
+                            progressManager.load(levelInfo, newXp, null)
+                        },
+                        onViewHistory = { nav.navigate("history") },
+                        onStreakUpdated = {
+                            appScope.launch(Dispatchers.IO) {
+                                progressManager.recalculateDailyProgress()
+                            }
+                        }
+                    ) 
+                }
+                composable("settings") {
+                    var showManualDialog by remember { mutableStateOf(false) }
+                    var highestStreak by remember { mutableStateOf(0) }
+                    
+                    LaunchedEffect(Unit) {
+                        val allDaily = withContext(Dispatchers.IO) { repo.getRecentDaily(10000).sortedBy { it.date } }
+                        var maxS = 0
+                        var currentS = 0
+                        var lastDate: LocalDate? = null
+
+                        for (dp in allDaily) {
+                            if (dp.goalsMet) {
+                                val d = LocalDate.parse(dp.date)
+                                if (lastDate == null || d == lastDate.plusDays(1)) {
+                                    currentS++
+                                } else if (d != lastDate) {
+                                    currentS = 1
+                                }
+                                if (currentS > maxS) maxS = currentS
+                                lastDate = d
+                            }
+                        }
+                        highestStreak = maxS
+                    }
+                    
+                    SettingsScreen(
+                        showLandmarks = showLandmarks,
+                        themeMode = themeMode,
+                        useMaterialYou = useMaterialYou,
+                        isHealthConnectAvailable = healthConnectManager.isSupported,
+                        isHealthConnectConnected = hcConnected,
+                        hardAlarmManager = hardAlarmManager,
+                        alarmConfig = alarmConfig,
+                        streakPrefs = streakPrefs,
+                        streakInfo = streakInfo,
+                        repo = repo,
                     onConnectHealthConnect = { 
                         try {
-                            hcPermissionLauncher.launch(healthConnectManager.permissions)
+                            hcPermissionLauncher.launch(healthConnectManager.permissions.toTypedArray())
                         } catch (e: Exception) {
                             Toast.makeText(context, "Could not open Health Connect permissions: ${e.message}", Toast.LENGTH_LONG).show()
                         }
@@ -532,6 +588,11 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                             highestStreak = highestStreak,
                             currentStreak = dailyState?.streak ?: 0
                         )
+                    },
+                    onStreakUpdated = {
+                        appScope.launch(Dispatchers.IO) {
+                            progressManager.recalculateDailyProgress()
+                        }
                     }
                 )
                 
@@ -610,6 +671,7 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
             }
         }
     }
+}
 
     if (showLevelUp) {
         AlertDialog(
@@ -635,23 +697,39 @@ private fun OnboardingScreen(onContinue: (String) -> Unit) {
 
 @Composable
 private fun WorkoutsScreen(onStart: (ExerciseType) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).padding(top = 48.dp, bottom = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)
+            .padding(top = 48.dp, bottom = 16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
         MotivationCard()
-        Text("Choose Workout", style = MaterialTheme.typography.titleLarge)
+        Text("Choose Workout", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         
-        Text("Essentials", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        WorkoutCard("Pushups", "Upper body strength", ExerciseType.PUSHUP, onStart)
-        WorkoutCard("Squats", "Lower body power", ExerciseType.SQUAT, onStart)
-        WorkoutCard("Lunges", "Leg strength & balance", ExerciseType.LUNGES, onStart)
+        Text("Essentials & Strength", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+        WorkoutCard("Pushups", "Upper body strength & chest focus", ExerciseType.PUSHUP, onStart)
+        WorkoutCard("Squats", "Lower body explosive power & quads", ExerciseType.SQUAT, onStart)
+        WorkoutCard("Lunges", "Leg strength, balance & hip mobility", ExerciseType.LUNGES, onStart)
+        WorkoutCard("Glute Bridges", "Posterior chain & glute activation", ExerciseType.GLUTE_BRIDGES, onStart)
         
-        Text("Arms & Core", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        WorkoutCard("Bicep Curl - Left", "Isolate left arm", ExerciseType.BICEP_LEFT, onStart)
-        WorkoutCard("Bicep Curl - Right", "Isolate right arm", ExerciseType.BICEP_RIGHT, onStart)
-        WorkoutCard("Shoulder Press", "Overhead strength", ExerciseType.SHOULDER_PRESS, onStart)
-        WorkoutCard("Pullups", "Back and biceps", ExerciseType.PULLUP, onStart)
+        Text("Arms & Upper Body", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+        WorkoutCard("Bicep Curl - Left", "Isolate left arm bicep contraction", ExerciseType.BICEP_LEFT, onStart)
+        WorkoutCard("Bicep Curl - Right", "Isolate right arm bicep contraction", ExerciseType.BICEP_RIGHT, onStart)
+        WorkoutCard("Shoulder Press", "Overhead deltoid strength", ExerciseType.SHOULDER_PRESS, onStart)
+        WorkoutCard("Lateral Raises", "Shoulder definition & side delts", ExerciseType.LATERAL_RAISES, onStart)
+        WorkoutCard("Tricep Dips", "Tricep lockout & arm extension", ExerciseType.TRICEP_DIPS, onStart)
+        WorkoutCard("Pullups", "Back lats and upper body pull", ExerciseType.PULLUP, onStart)
         
-        Text("Cardio", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        WorkoutCard("Jumping Jacks", "Full body cardio", ExerciseType.JUMPING_JACKS, onStart)
+        Text("Core & Stability", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+        WorkoutCard("Plank ⏱️", "Isometric hold duration & straight-line posture", ExerciseType.PLANK, onStart)
+        WorkoutCard("Crunches", "Abdominal core compression", ExerciseType.CRUNCHES, onStart)
+        WorkoutCard("Leg Raises", "Lower abs & hip flexor control", ExerciseType.LEG_RAISES, onStart)
+        
+        Text("Cardio & Agility", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+        WorkoutCard("High Knees", "High-intensity cardio & sprint power", ExerciseType.HIGH_KNEES, onStart)
+        WorkoutCard("Jumping Jacks", "Full body rhythm & aerobic endurance", ExerciseType.JUMPING_JACKS, onStart)
     }
 }
 
@@ -672,6 +750,11 @@ private fun SettingsScreen(
     useMaterialYou: Boolean,
     isHealthConnectAvailable: Boolean,
     isHealthConnectConnected: Boolean,
+    hardAlarmManager: HardAlarmManager,
+    alarmConfig: AlarmConfig,
+    streakPrefs: StreakPreferences,
+    streakInfo: StreakInfo,
+    repo: SessionRepository,
     onConnectHealthConnect: () -> Unit,
     onSyncToHealthConnect: (onShowDialog: (String, String) -> Unit) -> Unit,
     onSyncFromHealthConnect: (onShowDialog: (String, String) -> Unit) -> Unit,
@@ -694,11 +777,23 @@ private fun SettingsScreen(
     onSaveNotionKeys: (String, String) -> Unit,
     onSyncNotion: (onProgress: (current: Int, total: Int) -> Unit, onShowDialog: (String, String) -> Unit) -> Unit,
     onRetrieveNotion: (onProgress: (fetchedCount: Int) -> Unit, onShowDialog: (String, String) -> Unit) -> Unit,
-    onShareProfile: () -> Unit
+    onShareProfile: () -> Unit,
+    onStreakUpdated: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var dialogTitle by remember { mutableStateOf<String?>(null) }
     var dialogMessage by remember { mutableStateOf<String?>(null) }
     var showXpRatesDialog by remember { mutableStateOf(false) }
+
+    // Alarm States
+    var showAlarmTimeDialog by remember { mutableStateOf(false) }
+    var editAlarmTargetKey by remember { mutableStateOf<String?>(null) }
+    var editAlarmTargetLabel by remember { mutableStateOf("") }
+    var isVerifyingAlarm by remember { mutableStateOf(false) }
+
+    // Streak States
+    var showManualStreakDialog by remember { mutableStateOf(false) }
 
     // Notion Sync States
     var isSyncingNotion by remember { mutableStateOf(false) }
@@ -706,12 +801,133 @@ private fun SettingsScreen(
     var isRetrievingNotion by remember { mutableStateOf(false) }
     var retrieveProgressText by remember { mutableStateOf("") }
 
+    if (editAlarmTargetKey != null) {
+        val currentTargetVal = alarmConfig.targets[editAlarmTargetKey!!] ?: 15
+        var targetText by remember(editAlarmTargetKey) { mutableStateOf(currentTargetVal.toString()) }
+        AlertDialog(
+            onDismissRequest = { editAlarmTargetKey = null },
+            title = { Text("Edit $editAlarmTargetLabel Target") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Set required count (reps or hold seconds) to turn off the alarm:", style = MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(
+                        value = targetText,
+                        onValueChange = { targetText = it.filter { c -> c.isDigit() }.take(4) },
+                        label = { Text("Target Reps/Seconds") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val newVal = targetText.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                    val newTargets = alarmConfig.targets.toMutableMap()
+                    newTargets[editAlarmTargetKey!!] = newVal
+                    hardAlarmManager.updateTargets(newTargets)
+                    editAlarmTargetKey = null
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { editAlarmTargetKey = null }) { Text("Cancel") }
+            }
+        )
+    }
+
     if (dialogTitle != null && dialogMessage != null) {
         AlertDialog(
             onDismissRequest = { dialogTitle = null; dialogMessage = null },
             confirmButton = { TextButton(onClick = { dialogTitle = null; dialogMessage = null }) { Text("OK") } },
             title = { Text(dialogTitle!!) },
             text = { Text(dialogMessage!!) }
+        )
+    }
+
+    if (showAlarmTimeDialog) {
+        var hourText by remember { mutableStateOf(alarmConfig.hour.toString()) }
+        var minuteText by remember { mutableStateOf(alarmConfig.minute.toString()) }
+        AlertDialog(
+            onDismissRequest = { showAlarmTimeDialog = false },
+            title = { Text("Set Alarm Time") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Enter time in 24-hour format (e.g. 07:00 or 18:30):", style = MaterialTheme.typography.bodyMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = hourText,
+                            onValueChange = { hourText = it.take(2) },
+                            label = { Text("Hour (0-23)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = minuteText,
+                            onValueChange = { minuteText = it.take(2) },
+                            label = { Text("Minute (0-59)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val h = (hourText.toIntOrNull() ?: 7).coerceIn(0, 23)
+                        val m = (minuteText.toIntOrNull() ?: 0).coerceIn(0, 59)
+                        hardAlarmManager.setAlarmTime(h, m)
+                        showAlarmTimeDialog = false
+                        Toast.makeText(context, String.format(Locale.US, "Alarm set for %02d:%02d", h, m), Toast.LENGTH_SHORT).show()
+                    }
+                ) { Text("Set Time") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showAlarmTimeDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showManualStreakDialog) {
+        var streakValText by remember { mutableStateOf(streakInfo.streak.toString()) }
+        AlertDialog(
+            onDismissRequest = { showManualStreakDialog = false },
+            title = { Text("Set Workout Streak") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Manually override or calibrate your current streak count:", style = MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(
+                        value = streakValText,
+                        onValueChange = { streakValText = it },
+                        label = { Text("Streak Days") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val count = (streakValText.toIntOrNull() ?: 0).coerceAtLeast(0)
+                        streakPrefs.setManualStreak(count)
+                        onStreakUpdated()
+                        showManualStreakDialog = false
+                        Toast.makeText(context, "Streak updated to $count days! 🔥", Toast.LENGTH_SHORT).show()
+                    }
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (streakInfo.isManual) {
+                        TextButton(onClick = {
+                            streakPrefs.resetToAutoStreak(0)
+                            onStreakUpdated()
+                            showManualStreakDialog = false
+                            Toast.makeText(context, "Reset to automatic streak calculation", Toast.LENGTH_SHORT).show()
+                        }) { Text("Auto") }
+                    }
+                    OutlinedButton(onClick = { showManualStreakDialog = false }) { Text("Cancel") }
+                }
+            }
         )
     }
 
@@ -741,6 +957,220 @@ private fun SettingsScreen(
                         Text("Overlay skeleton on camera feed. Disable for cleaner view.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = showLandmarks, onCheckedChange = onToggleLandmarks)
+                }
+            }
+        }
+
+        // Hard Workout Alarm Card
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = if (alarmConfig.isRinging) Color(0xFF3E1F1F) else MaterialTheme.colorScheme.surface
+            ),
+            border = if (alarmConfig.isRinging) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFEF5350)) else null
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Hard Workout Alarm 🚨", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            if (alarmConfig.isRinging) {
+                                Surface(
+                                    color = Color.Red,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("RINGING", modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                        Text(
+                            "Locks max volume and forces auto-tracked workouts to turn off.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = alarmConfig.isEnabled,
+                        onCheckedChange = { hardAlarmManager.setAlarmEnabled(it) }
+                    )
+                }
+
+                // Alarm Time Selector
+                val timeStr = String.format(Locale.US, "%02d:%02d", alarmConfig.hour, alarmConfig.minute)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Alarm Time", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text(timeStr, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(onClick = { showAlarmTimeDialog = true }) {
+                        Icon(Icons.Default.Schedule, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Change Time")
+                    }
+                }
+
+                Divider()
+
+                // Target Workouts Section
+                Text("Required Auto-Tracking Targets:", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                
+                val availableWorkouts = listOf(
+                    Triple("pushups", "Pushups", 15),
+                    Triple("squats", "Squats", 20),
+                    Triple("plank", "Plank (Secs)", 45),
+                    Triple("crunches", "Crunches", 20),
+                    Triple("tricep_dips", "Tricep Dips", 15),
+                    Triple("jumping_jacks", "Jumping Jacks", 30),
+                    Triple("high_knees", "High Knees", 30),
+                    Triple("lateral_raises", "Lateral Raises", 15),
+                    Triple("glute_bridges", "Glute Bridges", 20),
+                    Triple("lunges", "Lunges", 20),
+                    Triple("shoulder_press", "Shoulder Press", 15),
+                    Triple("pullups", "Pullups", 8),
+                    Triple("leg_raises", "Leg Raises", 20)
+                )
+
+                availableWorkouts.forEach { (key, label, defaultCount) ->
+                    val currentTarget = alarmConfig.targets[key] ?: defaultCount
+                    val isChecked = alarmConfig.targets.containsKey(key)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Checkbox(
+                                checked = isChecked,
+                                onCheckedChange = { checked ->
+                                    val newTargets = alarmConfig.targets.toMutableMap()
+                                    if (checked) newTargets[key] = currentTarget
+                                    else newTargets.remove(key)
+                                    hardAlarmManager.updateTargets(newTargets)
+                                }
+                            )
+                            Text(label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        if (isChecked) {
+                            TextButton(onClick = {
+                                editAlarmTargetKey = key
+                                editAlarmTargetLabel = label
+                            }) {
+                                Text("$currentTarget target ✏️", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+
+                // Verify Button
+                Button(
+                    onClick = {
+                        isVerifyingAlarm = true
+                        scope.launch(Dispatchers.IO) {
+                            val result = hardAlarmManager.verifyWorkouts(repo)
+                            withContext(Dispatchers.Main) {
+                                isVerifyingAlarm = false
+                                if (result.isCompleted) {
+                                    val intent = Intent(context, HardAlarmService::class.java).apply {
+                                        action = HardAlarmService.ACTION_STOP_ALARM
+                                    }
+                                    context.startService(intent)
+                                    dialogTitle = "🎉 Workout Verified!"
+                                    dialogMessage = "Awesome job! You successfully completed all required auto-tracked workouts. The alarm has been turned off."
+                                } else {
+                                    dialogTitle = "⚠️ Workout Incomplete"
+                                    val details = result.remainingTargets.entries.joinToString("\n") {
+                                        "• ${Utils.capitalize(it.key.replace("_", " "))}: ${it.value} remaining"
+                                    }
+                                    dialogMessage = "You haven't finished all required auto-tracked workouts after the alarm rang:\n\n$details\n\nGo to the Workouts tab, turn on the camera tracker, and complete them to stop the alarm!"
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (alarmConfig.isRinging) Color(0xFFEF5350) else MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Icon(Icons.Default.CheckCircle, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (alarmConfig.isRinging) "Verify Workouts & Stop Alarm" else "Test Workout Verification")
+                }
+            }
+        }
+
+        // Streak & Freeze Management Card
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("Streak & Freeze Protection", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "Streaks never reset on goal changes. Earn 1 freeze token every 15 streak days.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Current Streak", style = MaterialTheme.typography.bodySmall)
+                        Text("🔥 ${streakInfo.streak} Days", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        if (streakInfo.isManual) {
+                            Text("(Manual Override Active)", style = MaterialTheme.typography.labelSmall, color = Color(0xFFFFB300))
+                        }
+                    }
+                    Button(onClick = { showManualStreakDialog = true }) {
+                        Icon(Icons.Default.Edit, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Set Streak")
+                    }
+                }
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Freeze Balance", style = MaterialTheme.typography.bodySmall)
+                        Text("🛡️ ${streakInfo.availableFreezes} Available", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF42A5F5))
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val yesterday = LocalDate.now().minusDays(1)
+                            val dialog = android.app.DatePickerDialog(
+                                context,
+                                { _, year, month, dayOfMonth ->
+                                    val picked = LocalDate.of(year, month + 1, dayOfMonth).toString()
+                                    val used = streakPrefs.useStreakFreeze(picked, streakInfo.streak)
+                                    if (used) {
+                                        onStreakUpdated()
+                                        Toast.makeText(context, "Applied streak freeze for $picked! 🛡️", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "Date $picked is already protected or invalid!", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                yesterday.year,
+                                yesterday.monthValue - 1,
+                                yesterday.dayOfMonth
+                            )
+                            dialog.datePicker.maxDate = System.currentTimeMillis()
+                            dialog.setTitle("Select Date to Protect with Freeze")
+                            dialog.show()
+                        },
+                        enabled = streakInfo.availableFreezes > 0
+                    ) {
+                        Text("Use Freeze (Pick Date)")
+                    }
                 }
             }
         }
@@ -1263,21 +1693,40 @@ private fun ProfileScreen(
     todaySteps: Long,
     isHealthConnectAvailable: Boolean,
     isHealthConnectConnected: Boolean,
+    healthConnectManager: HealthConnectManager,
+    achievementManager: AchievementManager,
+    streakPrefs: StreakPreferences,
+    streakInfo: StreakInfo,
     onNameChange: (String) -> Unit,
-    onViewHistory: () -> Unit
+    onXpEarned: (Float) -> Unit,
+    onViewHistory: () -> Unit,
+    onStreakUpdated: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     var editing by remember { mutableStateOf(false) }
     var temp by remember { mutableStateOf(name) }
     
-    // History Data Integration
+    // History & Stats Data
     var sessions by remember { mutableStateOf<List<SessionEntity>>(emptyList()) }
     var lineChartData by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
+    var steps7DaysData by remember { mutableStateOf<List<Pair<String, Long>>>(emptyList()) }
     var heatMapData by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var achievements by remember { mutableStateOf<List<Achievement>>(emptyList()) }
     
     var todayXp by remember { mutableStateOf(0f) }
     var weekXp by remember { mutableStateOf(0f) }
     var monthXp by remember { mutableStateOf(0f) }
     var activeDates by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var achievementTab by remember { mutableStateOf(0) } // 0=All, 1=Long Term, 2=Weekly
+
+    fun refreshAchievements(currentSessions: List<SessionEntity>) {
+        achievements = achievementManager.computeAchievements(
+            currentSessions,
+            emptyList(),
+            streakInfo.streak,
+            todaySteps
+        )
+    }
 
     LaunchedEffect(Unit) {
         val all = withContext(Dispatchers.IO) { repo.getAllSessions() }.sortedByDescending { it.timestampIso }
@@ -1311,12 +1760,9 @@ private fun ProfileScreen(
             val dateFormatter = java.time.format.DateTimeFormatter.ofPattern("MM-dd")
             val heatMapFormatter = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
             
-            val dailyReps = all.groupBy { 
-                try {
-                    val instant = try { OffsetDateTime.parse(it.timestampIso).toInstant() } catch (_: Exception) { Instant.parse(it.timestampIso) }
-                    instant.atZone(ZoneId.systemDefault()).toLocalDate()
-                } catch (e: Exception) { LocalDate.now() }
-            }.mapValues { it.value.sumOf { s -> s.reps } }
+            val dailyReps = all.filter { !it.exercise.equals("steps", ignoreCase = true) }
+                .groupBy { parseDate(it.timestampIso) }
+                .mapValues { it.value.sumOf { s -> s.reps } }
             
             lineChartData = dailyReps.entries.sortedBy { it.key }
                 .takeLast(14)
@@ -1331,6 +1777,12 @@ private fun ProfileScreen(
             
             activeDates = heatMapData.keys
         } catch (e: Exception) {}
+
+        // Load 7 days steps
+        steps7DaysData = healthConnectManager.getLast7DaysSteps()
+
+        // Load achievements
+        refreshAchievements(all)
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp).padding(top = 48.dp, bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -1355,6 +1807,64 @@ private fun ProfileScreen(
                 Text("Level ${levelInfo.level} • ${levelInfo.rank}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                 LinearProgressIndicator(progress = levelInfo.progressPercent/100f, modifier = Modifier.fillMaxWidth())
                 Text("${levelInfo.currentXp} XP / ${levelInfo.xpForNextLevel} XP", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        // Streak & Freeze Protection Card
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+        ) {
+            Row(
+                Modifier.padding(16.dp).fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("🔥 ${streakInfo.streak} Days", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Surface(
+                            color = Color(0xFF1E88E5).copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                "🛡️ ${streakInfo.availableFreezes} Freezes",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                fontSize = 12.sp,
+                                color = Color(0xFF42A5F5),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Text("1 Freeze earned every 15 streak days", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                OutlinedButton(
+                    onClick = {
+                        val yesterday = LocalDate.now().minusDays(1)
+                        val dialog = android.app.DatePickerDialog(
+                            context,
+                            { _, year, month, dayOfMonth ->
+                                val picked = LocalDate.of(year, month + 1, dayOfMonth).toString()
+                                val used = streakPrefs.useStreakFreeze(picked, streakInfo.streak)
+                                if (used) {
+                                    onStreakUpdated()
+                                    Toast.makeText(context, "Streak freeze activated for $picked! 🛡️", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Date $picked is already protected or invalid!", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            yesterday.year,
+                            yesterday.monthValue - 1,
+                            yesterday.dayOfMonth
+                        )
+                        dialog.datePicker.maxDate = System.currentTimeMillis()
+                        dialog.setTitle("Select Date for Streak Freeze")
+                        dialog.show()
+                    },
+                    enabled = streakInfo.availableFreezes > 0
+                ) {
+                    Text("Use Freeze")
+                }
             }
         }
 
@@ -1386,9 +1896,166 @@ private fun ProfileScreen(
         Text("Reps Trend (Last 14 Days)", style = MaterialTheme.typography.titleMedium)
         LineChart(lineChartData, Modifier.fillMaxWidth().height(200.dp))
 
-        // History List
+        // Steps Trend (Last 7 Days)
+        Text("Steps Trend (Last 7 Days)", style = MaterialTheme.typography.titleMedium)
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                StepsBarChart(data = steps7DaysData, modifier = Modifier.fillMaxWidth())
+            }
+        }
+
+        // Accomplishments & Dopamine Achievements Section
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Accomplishments", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            val unlockedCount = achievements.count { it.isUnlocked }
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    "$unlockedCount / ${achievements.size} Unlocked",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+
+        // Tabs: Weekly, Long Term, Completed
+        TabRow(
+            selectedTabIndex = achievementTab,
+            containerColor = Color.Transparent,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Tab(selected = achievementTab == 0, onClick = { achievementTab = 0 }, text = { Text("Weekly") })
+            Tab(selected = achievementTab == 1, onClick = { achievementTab = 1 }, text = { Text("Long Term") })
+            Tab(selected = achievementTab == 2, onClick = { achievementTab = 2 }, text = { Text("Completed") })
+        }
+
+        val filteredAchievements = when (achievementTab) {
+            0 -> achievements.filter { it.type == AchievementType.WEEKLY && !it.isClaimed }
+            1 -> achievements.filter { it.type == AchievementType.LONG_TERM && !it.isClaimed }
+            2 -> achievements.filter { it.isClaimed }
+            else -> emptyList()
+        }
+
+        if (filteredAchievements.isEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        when (achievementTab) {
+                            0 -> "🎉 All weekly accomplishments completed!"
+                            1 -> "🏆 All long-term accomplishments completed!"
+                            else -> "No completed accomplishments yet. Start working out to unlock them! 💪"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            filteredAchievements.forEach { ach ->
+                val progress = if (ach.target > 0) (ach.current.toFloat() / ach.target).coerceIn(0f, 1f) else 0f
+                val isClaimable = ach.isUnlocked && !ach.isClaimed
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isClaimable) Color(0xFF2E2210) else MaterialTheme.colorScheme.surface
+                    ),
+                    border = if (isClaimable) androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFFFD54F)) else null
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (ach.isUnlocked) Color(0xFF3E2723) else Color.DarkGray.copy(alpha = 0.3f),
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(ach.icon, fontSize = 20.sp)
+                                    }
+                                }
+                                Column {
+                                    Text(ach.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                                    Text(ach.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+
+                            if (ach.isClaimed) {
+                                Surface(
+                                    color = Color(0xFF2E7D32).copy(alpha = 0.2f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("CLAIMED ⭐", modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = Color(0xFF81C784), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            } else if (isClaimable) {
+                                Button(
+                                    onClick = {
+                                        achievementManager.claimAchievement(ach, repo) { newXp ->
+                                            onXpEarned(newXp)
+                                            refreshAchievements(sessions)
+                                            Toast.makeText(context, "🎉 ${ach.title} Claimed! +${ach.xpReward.toInt()} XP Earned!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB300), contentColor = Color.Black),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text("+${ach.xpReward.toInt()} XP ⚡", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
+                            } else {
+                                Surface(
+                                    color = Color.Gray.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("+${ach.xpReward.toInt()} XP", modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = Color.Gray, fontSize = 11.sp)
+                                }
+                            }
+                        }
+
+                        // Progress bar
+                        LinearProgressIndicator(
+                            progress = progress,
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            color = if (ach.isUnlocked) Color(0xFFFFB300) else MaterialTheme.colorScheme.primary,
+                            trackColor = Color.Gray.copy(alpha = 0.2f)
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(ach.category, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                            Text("${ach.current} / ${ach.target}", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // History List (Workouts only, excluding achievements)
         Text("Recent History", style = MaterialTheme.typography.titleMedium)
-        sessions.take(10).forEach { session ->
+        sessions.filter { !it.exercise.startsWith("Achievement", ignoreCase = true) }.take(10).forEach { session ->
             val name = Utils.capitalize(session.exercise.replace("_", " "))
             ListItem(
                 leadingContent = {

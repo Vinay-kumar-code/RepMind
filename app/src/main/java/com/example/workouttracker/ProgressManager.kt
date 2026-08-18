@@ -13,7 +13,11 @@ import java.time.LocalDate
  * ProgressManager keeps track of today's goals, streak and live progress.
  * It persists per-day totals in Room (daily_progress table).
  */
-class ProgressManager(private val repo: SessionRepository, private val scope: CoroutineScope) {
+class ProgressManager(
+    private val repo: SessionRepository, 
+    private val scope: CoroutineScope,
+    val streakPrefs: StreakPreferences? = null
+) {
     data class DailyGoals(val push: Int, val squat: Int, val bicep: Int)
     data class DailyState(
         val date: String,
@@ -65,39 +69,49 @@ class ProgressManager(private val repo: SessionRepository, private val scope: Co
         publish(entity, level, totalXp, streak)
     }
 
-    private suspend fun computeStreak(): Int {
-        val recents = repo.getRecentDaily(3650).sortedByDescending { it.date }
-        var streak = 0
-        var expected = LocalDate.now()
-        var checkedToday = false
+    suspend fun computeStreak(): Int {
+        val allSessions = repo.getAllSessions()
+        val recents = repo.getRecentDaily(3650)
+        val frozenDates = streakPrefs?.getFrozenDates() ?: emptySet()
 
-        for (dp in recents) {
-            val d = LocalDate.parse(dp.date)
-            if (!checkedToday && d == expected) {
-                checkedToday = true
-                if (dp.goalsMet) {
-                    streak++
-                    expected = expected.minusDays(1)
-                } else {
-                    // Today not met yet, streak depends on yesterday
-                    expected = expected.minusDays(1)
-                }
-                continue
-            } else if (!checkedToday && d.isBefore(expected)) {
-                checkedToday = true
-                expected = expected.minusDays(1)
-            }
+        val activeDates = mutableSetOf<String>()
 
-            if (d == expected) {
-                if (dp.goalsMet) {
-                    streak++
-                    expected = expected.minusDays(1)
-                } else break
-            } else if (d.isBefore(expected)) {
-                break
+        // 1. Add all completed workout dates from sessions (excluding achievement syncs and background steps)
+        for (session in allSessions) {
+            val isAchievement = session.exercise.startsWith("Achievement", ignoreCase = true)
+            val isStepSync = session.exercise.equals("steps", ignoreCase = true)
+            if (!isAchievement && !isStepSync && (session.reps > 0 || session.durationSeconds > 0 || session.totalXp > 0f)) {
+                val date = sessionDate(session.timestampIso)
+                activeDates.add(date)
             }
         }
-        return streak
+
+        // 2. Add all daily progress entries where goals were met or workout exercises recorded
+        for (dp in recents) {
+            if (dp.goalsMet || (dp.pushups + dp.squats + dp.bicepLeft + dp.bicepRight + dp.plankSeconds) > 0) {
+                activeDates.add(dp.date)
+            }
+        }
+
+        // 3. Add all frozen dates
+        activeDates.addAll(frozenDates)
+
+        val today = LocalDate.now()
+        val todayStr = today.toString()
+        val todayDp = repo.getDaily(todayStr)
+        val todayGoalsMet = (todayDp?.goalsMet == true) || frozenDates.contains(todayStr)
+
+        var streak = 0
+        // If today's workout goal is reached or frozen, include today; otherwise evaluate streak completed up to yesterday
+        var check = if (todayGoalsMet) today else today.minusDays(1)
+
+        while (activeDates.contains(check.toString())) {
+            streak++
+            check = check.minusDays(1)
+        }
+
+        val finalStreak = streakPrefs?.loadStreakInfo(streak)?.streak ?: streak
+        return finalStreak
     }
 
     private fun publish(entity: DailyProgressEntity, level: Int, totalXp: Float, streak: Int) {
@@ -121,8 +135,9 @@ class ProgressManager(private val repo: SessionRepository, private val scope: Co
         scope.launch(Dispatchers.IO) {
             val date = today()
             val entity = repo.getDaily(date) ?: return@launch
-            val streak = computeStreak()
             val updated = entity.copy(goalsMet = goalsMet(entity))
+            repo.upsertDaily(updated)
+            val streak = computeStreak()
             publish(updated, levelInfo.level, totalXp, streak)
         }
     }

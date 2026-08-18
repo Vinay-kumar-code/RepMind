@@ -97,6 +97,92 @@ fun LineChart(
 }
 
 @Composable
+fun StepsBarChart(
+    data: List<Pair<String, Long>>, // Date/Day label, Step Count
+    modifier: Modifier = Modifier,
+    primaryColor: Color = Color(0xFF00E676),
+    secondaryColor: Color = Color(0xFF00B0FF),
+    goalSteps: Long = 10000L
+) {
+    if (data.isEmpty()) {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text("No step data available", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+        }
+        return
+    }
+
+    val maxSteps = maxOf(data.maxOfOrNull { it.second } ?: 0L, goalSteps).coerceAtLeast(1000L)
+
+    Column(modifier = modifier) {
+        Canvas(modifier = Modifier.fillMaxWidth().height(160.dp).padding(horizontal = 8.dp, vertical = 12.dp)) {
+            val width = size.width
+            val height = size.height
+            val barCount = data.size
+            val totalSpacing = width * 0.35f
+            val spacing = totalSpacing / (barCount + 1).coerceAtLeast(1)
+            val barWidth = (width - totalSpacing) / barCount.coerceAtLeast(1)
+
+            // Draw 10k Goal line
+            val goalY = height - (goalSteps.toFloat() / maxSteps * height)
+            if (goalY in 0f..height) {
+                drawLine(
+                    color = Color(0xFFFFD54F).copy(alpha = 0.5f),
+                    start = Offset(0f, goalY),
+                    end = Offset(width, goalY),
+                    strokeWidth = 2f,
+                    pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+                )
+            }
+
+            val textPaint = Paint().apply {
+                color = android.graphics.Color.WHITE
+                textSize = 24f
+                textAlign = Paint.Align.CENTER
+                isFakeBoldText = true
+            }
+
+            val labelPaint = Paint().apply {
+                color = android.graphics.Color.LTGRAY
+                textSize = 26f
+                textAlign = Paint.Align.CENTER
+            }
+
+            data.forEachIndexed { i, pair ->
+                val x = spacing + i * (barWidth + spacing)
+                val barHeight = ((pair.second.toFloat() / maxSteps) * height).coerceIn(4f, height)
+                val y = height - barHeight
+
+                val isMet = pair.second >= goalSteps
+                val brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                    colors = if (isMet) listOf(Color(0xFF00E676), Color(0xFF00B0FF))
+                             else listOf(primaryColor.copy(alpha = 0.85f), primaryColor.copy(alpha = 0.4f)),
+                    startY = y,
+                    endY = height
+                )
+
+                // Draw Bar
+                drawRoundRect(
+                    brush = brush,
+                    topLeft = Offset(x, y),
+                    size = androidx.compose.ui.geometry.Size(barWidth, barHeight),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(12f, 12f)
+                )
+
+                // Draw value on top of bar if space permits
+                if (barHeight > 30f) {
+                    val countStr = if (pair.second >= 1000) "${String.format(Locale.US, "%.1f", pair.second / 1000f)}k" else "${pair.second}"
+                    drawContext.canvas.nativeCanvas.drawText(countStr, x + barWidth / 2f, y - 8f, textPaint)
+                }
+
+                // Draw Day Label below
+                drawContext.canvas.nativeCanvas.drawText(pair.first, x + barWidth / 2f, height + 32f, labelPaint)
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+    }
+}
+
+@Composable
 fun ContributionHeatMap(
     data: Map<String, Int>, // Date (YYYY-MM-DD) -> Count
     modifier: Modifier = Modifier

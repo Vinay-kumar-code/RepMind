@@ -6,6 +6,14 @@
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.camera.autofocus" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     
     <!-- Health Connect Permissions -->
     <uses-permission android:name="android.permission.health.READ_STEPS"/>
@@ -46,6 +54,12 @@
                 <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".CrashActivity"
+            android:exported="false"
+            android:label="Crash Report"
+            android:theme="@android:style/Theme.DeviceDefault.Light" />
         
         <activity-alias
             android:name="ViewPermissionUsageActivity"
@@ -67,6 +81,27 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <receiver
+            android:name=".alarm.HardAlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.workouttracker.action.TRIGGER_HARD_ALARM" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".alarm.HardAlarmService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <receiver
+            android:name=".StepSyncReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.workouttracker.action.NIGHTLY_STEP_SYNC" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

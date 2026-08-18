@@ -82,16 +82,30 @@ object LevelSystem {
     fun xpPerShoulderPress(rates: XpRates? = null) = rates?.shoulderPress ?: 0.1f
     fun xpPerJumpingJack(rates: XpRates? = null) = rates?.jumpingJack ?: 0.05f // 20 jacks = 1 XP
     fun xpPerPullup(rates: XpRates? = null) = rates?.pullup ?: 0.2f // 5 pullups = 1 XP
+    fun xpPerLateralRaise(rates: XpRates? = null) = rates?.lateralRaise ?: 0.08f
+    fun xpPerGluteBridge(rates: XpRates? = null) = rates?.gluteBridge ?: 0.08f
+    fun xpPerCrunch(rates: XpRates? = null) = rates?.crunch ?: 0.07f
+    fun xpPerTricepDip(rates: XpRates? = null) = rates?.tricepDip ?: 0.1f
+    fun xpPerHighKnee(rates: XpRates? = null) = rates?.highKnee ?: 0.03f
+    fun xpPerLegRaise(rates: XpRates? = null) = rates?.legRaise ?: 0.08f
+    fun xpPerPlankSecond(rates: XpRates? = null) = rates?.plank ?: 0.005f // 200 seconds = 1 XP
 
     fun xpForStandardExercise(exercise: String, reps: Int, rates: XpRates? = null): Float {
-        val xpPerRep = when (exercise.uppercase()) {
+        val xpPerRep = when (exercise.uppercase().replace(" ", "_")) {
             "PUSHUPS", "PUSHUP" -> xpPerPushup(rates)
             "SQUATS", "SQUAT" -> xpPerSquat(rates)
-            "BICEP CURL - LEFT", "BICEP CURL - RIGHT", "BICEP_LEFT", "BICEP_RIGHT" -> xpPerBicepCurl(rates)
+            "BICEP_CURL_-_LEFT", "BICEP_CURL_-_RIGHT", "BICEP_LEFT", "BICEP_RIGHT", "BICEP_CURLS" -> xpPerBicepCurl(rates)
             "PULLUPS", "PULLUP" -> xpPerPullup(rates)
-            "SHOULDER_PRESS", "SHOULDER PRESS" -> xpPerShoulderPress(rates)
-            "JUMPING_JACKS", "JUMPING JACKS" -> xpPerJumpingJack(rates)
+            "SHOULDER_PRESS" -> xpPerShoulderPress(rates)
+            "JUMPING_JACKS" -> xpPerJumpingJack(rates)
             "LUNGES", "LUNGE" -> xpPerLunge(rates)
+            "LATERAL_RAISES", "LATERAL_RAISE" -> xpPerLateralRaise(rates)
+            "GLUTE_BRIDGES", "GLUTE_BRIDGE" -> xpPerGluteBridge(rates)
+            "CRUNCHES", "CRUNCH", "SITUPS", "SIT_UPS" -> xpPerCrunch(rates)
+            "TRICEP_DIPS", "TRICEP_DIP", "DIPS" -> xpPerTricepDip(rates)
+            "HIGH_KNEES", "HIGH_KNEE" -> xpPerHighKnee(rates)
+            "LEG_RAISES", "LEG_RAISE" -> xpPerLegRaise(rates)
+            "PLANK", "PLANKS" -> xpPerPlankSecond(rates)
             else -> rates?.manualRep ?: 0.1f // Default fallback
         }
         val mult = rates?.multiplier ?: 1.0f

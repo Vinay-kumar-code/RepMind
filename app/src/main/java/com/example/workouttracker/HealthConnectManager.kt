@@ -12,6 +12,7 @@ import com.example.workouttracker.db.SessionRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -20,29 +21,47 @@ import java.time.temporal.ChronoUnit
 class HealthConnectManager(private val context: Context, private val repo: SessionRepository) {
 
     val sdkStatus: Int
-        get() = HealthConnectClient.getSdkStatus(context)
+        get() = try {
+            HealthConnectClient.getSdkStatus(context)
+        } catch (t: Throwable) {
+            HealthConnectClient.SDK_UNAVAILABLE
+        }
 
     val isSupported: Boolean
-        get() = sdkStatus == HealthConnectClient.SDK_AVAILABLE
+        get() = try {
+            sdkStatus == HealthConnectClient.SDK_AVAILABLE
+        } catch (t: Throwable) {
+            false
+        }
 
     fun getClient(): HealthConnectClient? {
-        return if (isSupported) HealthConnectClient.getOrCreate(context) else null
+        return try {
+            if (isSupported) HealthConnectClient.getOrCreate(context) else null
+        } catch (t: Throwable) {
+            null
+        }
     }
 
-    val permissions = setOf(
-        androidx.health.connect.client.permission.HealthPermission.getReadPermission(StepsRecord::class),
-        androidx.health.connect.client.permission.HealthPermission.getReadPermission(ExerciseSessionRecord::class),
-        androidx.health.connect.client.permission.HealthPermission.getWritePermission(ExerciseSessionRecord::class),
-        androidx.health.connect.client.permission.HealthPermission.getWritePermission(ActiveCaloriesBurnedRecord::class),
-        androidx.health.connect.client.permission.HealthPermission.getWritePermission(StepsRecord::class)
-    )
+    val permissions by lazy {
+        try {
+            setOf(
+                androidx.health.connect.client.permission.HealthPermission.getReadPermission(StepsRecord::class),
+                androidx.health.connect.client.permission.HealthPermission.getReadPermission(ExerciseSessionRecord::class),
+                androidx.health.connect.client.permission.HealthPermission.getWritePermission(ExerciseSessionRecord::class),
+                androidx.health.connect.client.permission.HealthPermission.getWritePermission(ActiveCaloriesBurnedRecord::class),
+                androidx.health.connect.client.permission.HealthPermission.getWritePermission(StepsRecord::class)
+            )
+        } catch (t: Throwable) {
+            emptySet()
+        }
+    }
 
     suspend fun hasPermissions(): Boolean {
         val client = getClient() ?: return false
         return try {
             val granted = client.permissionController.getGrantedPermissions()
             granted.containsAll(permissions)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
             false
         }
@@ -69,6 +88,49 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
             e.printStackTrace()
             0L
         }
+    }
+
+    suspend fun getLast7DaysSteps(): List<Pair<String, Long>> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<Pair<String, Long>>()
+        val today = LocalDate.now()
+        val client = getClient()
+
+        val allSessions = repo.getAllSessions()
+
+        for (i in 6 downTo 0) {
+            val day = today.minusDays(i.toLong())
+            val label = day.format(DateTimeFormatter.ofPattern("EEE"))
+            var daySteps = 0L
+
+            if (client != null && hasPermissions()) {
+                try {
+                    val startOfDay = day.atStartOfDay(ZoneId.systemDefault()).toInstant()
+                    val endOfDay = if (i == 0) Instant.now() else day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant()
+
+                    val response = client.readRecords(
+                        ReadRecordsRequest(
+                            StepsRecord::class,
+                            timeRangeFilter = TimeRangeFilter.between(startOfDay, endOfDay)
+                        )
+                    )
+                    daySteps = response.records.sumOf { it.count }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            if (daySteps == 0L) {
+                // Fallback to database step sessions
+                val dayStr = day.toString()
+                val dbSteps = allSessions.filter { s ->
+                    s.exercise.equals("steps", ignoreCase = true) && s.timestampIso.startsWith(prefix = dayStr)
+                }.sumOf { it.reps.toLong() }
+                daySteps = dbSteps
+            }
+
+            list.add(Pair(label, daySteps))
+        }
+        list
     }
 
     suspend fun syncFromHealthConnect(rates: XpRates? = null): Result<Int> = withContext(Dispatchers.IO) {

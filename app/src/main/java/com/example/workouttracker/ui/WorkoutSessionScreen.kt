@@ -234,14 +234,21 @@ fun WorkoutSessionScreen(
                     }
                 }
 
-                // Center HUD: Rep Counter & Form Arc inside camera
+            // Center HUD: Rep Counter & Form Arc inside camera
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    val depth = feedback.depthPercent / 100f
-                    val rangeOk = feedback.rangeOk
-                    val color = if (rangeOk) Color.Green else Color.Yellow
+                    val isPlank = exercise == ExerciseType.PLANK
+                    val depth = if (isPlank) (feedback.formScore / 100f).coerceIn(0f, 1f) else (feedback.depthPercent / 100f).coerceIn(0f, 1f)
+                    val isHoldingPlank = feedback.stage == "holding"
+                    val rangeOk = if (isPlank) isHoldingPlank else feedback.rangeOk
+                    val color = when {
+                        isPlank && isHoldingPlank -> Color(0xFF00E676)
+                        isPlank && feedback.stage == "misaligned" -> Color(0xFFFF9100)
+                        rangeOk -> Color.Green
+                        else -> Color.Yellow
+                    }
                     
                     Canvas(modifier = Modifier.size(200.dp)) {
                         drawArc(
@@ -262,24 +269,38 @@ fun WorkoutSessionScreen(
 
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "$reps",
+                            text = if (isPlank) "${reps}s" else "$reps",
                             style = MaterialTheme.typography.displayLarge.copy(
-                                fontSize = 72.sp,
+                                fontSize = if (isPlank && reps >= 100) 56.sp else 72.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
                         )
                         Text(
-                            text = "REPS",
+                            text = if (isPlank) "HOLD TIME" else "REPS",
                             style = MaterialTheme.typography.labelLarge.copy(color = Color.White.copy(alpha = 0.8f))
                         )
                     }
                 }
             }
 
-            // Middle section (Go Deeper & Subtitle)
-            val pillColor = if (feedback.rangeOk) Color(0xFF4CAF50) else Color(0xFF8A2387)
-            val pillText = if (feedback.rangeOk) "Good Depth!" else "Go Deeper!"
+            // Middle section (Go Deeper & Subtitle / Plank Form)
+            val isPlank = exercise == ExerciseType.PLANK
+            val isHoldingPlank = feedback.stage == "holding"
+            val pillColor = when {
+                isPlank && isHoldingPlank -> Color(0xFF4CAF50)
+                isPlank && feedback.stage == "misaligned" -> Color(0xFFFF7043)
+                isPlank -> Color(0xFF8A2387)
+                feedback.rangeOk -> Color(0xFF4CAF50)
+                else -> Color(0xFF8A2387)
+            }
+            val pillText = when {
+                isPlank && isHoldingPlank -> "Holding Plank (${feedback.formScore}%)"
+                isPlank && feedback.stage == "misaligned" -> "Align Body Straight!"
+                isPlank -> "Get in Plank Position"
+                feedback.rangeOk -> "Good Form!"
+                else -> "Go Deeper!"
+            }
             
             Box(
                 modifier = Modifier
@@ -351,7 +372,7 @@ fun WorkoutSessionScreen(
                             Spacer(Modifier.width(12.dp))
                             Column {
                                 Text("Best Set", color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text("$bestSet reps", color = Color(0xFFA259FF), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                Text(if (isPlank) "${bestSet}s" else "$bestSet reps", color = Color(0xFFA259FF), fontSize = 18.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                         Spacer(Modifier.weight(1f))
@@ -445,8 +466,9 @@ fun WorkoutSessionScreen(
                     
                     val categories = mapOf(
                         "Essentials" to listOf(ExerciseType.PUSHUP, ExerciseType.SQUAT, ExerciseType.LUNGES),
-                        "Arms & Core" to listOf(ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT, ExerciseType.SHOULDER_PRESS, ExerciseType.PULLUP),
-                        "Flexibility & Cardio" to listOf(ExerciseType.JUMPING_JACKS)
+                        "Upper Body" to listOf(ExerciseType.SHOULDER_PRESS, ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT, ExerciseType.TRICEP_DIPS, ExerciseType.LATERAL_RAISES, ExerciseType.PULLUP),
+                        "Core & Abs" to listOf(ExerciseType.PLANK, ExerciseType.CRUNCHES, ExerciseType.LEG_RAISES),
+                        "Cardio & Agility" to listOf(ExerciseType.JUMPING_JACKS, ExerciseType.HIGH_KNEES)
                     )
                     
                     categories.forEach { (category, types) ->
