@@ -662,11 +662,21 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
             composable("session") {
                 WorkoutSessionScreen(
                     repo = repo,
+                    progressManager = progressManager,
+                    xpPrefs = xpPrefs,
                     onBack = { nav.popBackStack() },
                     engine = engine,
                     performanceSettings = PerformanceSettings(showLandmarks = showLandmarks),
                     dailyState = dailyState,
-                    onExerciseChange = { engine.setExerciseType(it) }
+                    onExerciseChange = { engine.setExerciseType(it) },
+                    onSessionSaved = { addedXp ->
+                        appScope.launch {
+                            val newProf = withContext(Dispatchers.IO) { repo.getProfile() }
+                            profileXp = newProf?.totalXp ?: 0f
+                            levelInfo = LevelSystem.levelFromXp(profileXp)
+                            progressManager.load(levelInfo, profileXp, newProf)
+                        }
+                    }
                 )
             }
         }

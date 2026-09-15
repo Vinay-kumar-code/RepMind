@@ -4,25 +4,39 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 
 class SoundManager {
-    private val toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+    private val toneGenerator: ToneGenerator? = try {
+        ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+    } catch (e: Exception) {
+        null
+    }
 
     fun playRepSound() {
-        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+        try {
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+        } catch (_: Exception) {}
     }
     
     fun playGoodFormSound() {
-        toneGenerator.startTone(ToneGenerator.TONE_PROP_ACK, 100)
+        try {
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 100)
+        } catch (_: Exception) {}
     }
 
     fun playBadFormSound() {
-        toneGenerator.startTone(ToneGenerator.TONE_SUP_ERROR, 200)
+        try {
+            toneGenerator?.startTone(ToneGenerator.TONE_SUP_ERROR, 200)
+        } catch (_: Exception) {}
     }
 
     fun playMilestoneSound() {
-        toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 300)
+        try {
+            toneGenerator?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 300)
+        } catch (_: Exception) {}
     }
 
     fun release() {
-        toneGenerator.release()
+        try {
+            toneGenerator?.release()
+        } catch (_: Exception) {}
     }
 }

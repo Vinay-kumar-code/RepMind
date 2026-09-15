@@ -3,6 +3,7 @@ package com.example.workouttracker
 import com.example.workouttracker.db.SessionEntity
 import com.example.workouttracker.db.SessionRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -53,13 +54,21 @@ class NotionSyncManager(private val repo: SessionRepository) {
                     .post(json.toString().toRequestBody(jsonMediaType))
                     .build()
 
-                client.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        syncedIds.add(session.id)
-                    } else {
-                        // Log or handle error if needed
+                var success = false
+                var attempts = 0
+                while (!success && attempts < 2) {
+                    attempts++
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            syncedIds.add(session.id)
+                            success = true
+                        } else if (response.code == 429) {
+                            val retrySecs = response.header("Retry-After")?.toLongOrNull() ?: 2L
+                            delay(retrySecs * 1000L)
+                        }
                     }
                 }
+                delay(300L)
             }
 
             if (syncedIds.isNotEmpty()) {

@@ -20,6 +20,15 @@ class HardAlarmReceiver : BroadcastReceiver() {
         val triggerTs = System.currentTimeMillis()
         manager.setRingingState(true, triggerTs)
 
+        // Automatically reschedule for tomorrow so the alarm repeats daily
+        if (config.enabled) {
+            try {
+                manager.scheduleNextAlarm(config.hour, config.minute)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
         // Start Foreground Alarm Service
         val serviceIntent = Intent(context, HardAlarmService::class.java).apply {
             action = HardAlarmService.ACTION_START_ALARM
@@ -31,10 +40,14 @@ class HardAlarmReceiver : BroadcastReceiver() {
         }
 
         // Try to launch MainActivity with full screen intent
-        val launchIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra("HARD_ALARM_RINGING", true)
+        try {
+            val launchIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra("HARD_ALARM_RINGING", true)
+            }
+            context.startActivity(launchIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        context.startActivity(launchIntent)
     }
 }

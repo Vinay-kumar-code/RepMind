@@ -28,11 +28,13 @@ import com.example.workouttracker.WorkoutEngine
 import com.example.workouttracker.WorkoutEngine.ExerciseType
 import com.example.workouttracker.LevelSystem
 import com.example.workouttracker.ProgressManager
+import com.example.workouttracker.XpPreferences
 import com.example.workouttracker.db.SessionRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -41,11 +43,14 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun WorkoutSessionScreen(
     repo: SessionRepository,
+    progressManager: ProgressManager? = null,
+    xpPrefs: XpPreferences? = null,
     onBack: () -> Unit,
     engine: WorkoutEngine,
     performanceSettings: PerformanceSettings,
     dailyState: ProgressManager.DailyState?,
-    onExerciseChange: (ExerciseType) -> Unit
+    onExerciseChange: (ExerciseType) -> Unit,
+    onSessionSaved: ((Float) -> Unit)? = null
 ) {
     val view = LocalView.current
     DisposableEffect(Unit) {
@@ -106,7 +111,7 @@ fun WorkoutSessionScreen(
             
             // Auto Save Logic (30s inactivity)
             if (autoMode && isSessionActive && reps > 0 && (System.currentTimeMillis() - lastRepChangeTime > 30000)) {
-                saveSession(repo, reps, xp, sessionStartMs, exercise)
+                saveSession(repo, reps, xp, sessionStartMs, exercise, progressManager, onSessionSaved)
                 engine.reset()
                 reps = 0; xp = 0f; lastReps = 0; isSessionActive = false; sessionStartMs = 0L
                 bestSet = repo.getBestSetForExercise(exercise.name.lowercase())
@@ -426,7 +431,7 @@ fun WorkoutSessionScreen(
                                 sessionStartMs = System.currentTimeMillis()
                                 isSessionActive = true
                             } else if (reps > 0) {
-                                saveSession(repo, reps, xp, sessionStartMs, exercise)
+                                saveSession(repo, reps, xp, sessionStartMs, exercise, progressManager, onSessionSaved)
                                 engine.reset()
                                 reps = 0; xp = 0f; lastReps = 0; isSessionActive = false; sessionStartMs = 0L
                             } else {
@@ -490,7 +495,19 @@ fun WorkoutSessionScreen(
 
         if (showHistory) {
             ModalBottomSheet(onDismissRequest = { showHistory = false }) {
-                HistoryScreen(repo = repo, onBack = { showHistory = false })
+                HistoryScreen(
+                    repo = repo,
+                    progressManager = progressManager,
+                    xpPrefs = xpPrefs,
+                    onDataChanged = {
+                        progressManager?.let { pm ->
+                            CoroutineScope(Dispatchers.IO).launch {
+                                pm.recalculateDailyProgress()
+                            }
+                        }
+                    },
+                    onBack = { showHistory = false }
+                )
             }
         }
     }
@@ -501,7 +518,9 @@ private fun saveSession(
     reps: Int,
     xp: Float,
     sessionStartMs: Long,
-    exercise: ExerciseType
+    exercise: ExerciseType,
+    progressManager: ProgressManager?,
+    onSessionSaved: ((Float) -> Unit)?
 ) {
     val istZone = ZoneId.of("Asia/Kolkata")
     val now = ZonedDateTime.now(istZone)
@@ -515,5 +534,14 @@ private fun saveSession(
         durationSeconds = durationSecs,
         totalXp = xp
     )
-    CoroutineScope(Dispatchers.IO).launch { repo.insertSession(session) }
+    CoroutineScope(Dispatchers.IO).launch {
+        repo.insertSession(session)
+        val prof = repo.getProfile()
+        val currentXp = prof?.totalXp ?: 0f
+        repo.upsertProfile(currentXp + xp)
+        progressManager?.recalculateDailyProgress()
+        withContext(Dispatchers.Main) {
+            onSessionSaved?.invoke(xp)
+        }
+    }
 }
