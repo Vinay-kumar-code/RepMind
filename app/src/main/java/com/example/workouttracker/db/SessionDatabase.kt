@@ -120,7 +120,7 @@ interface SessionDao {
 
 @Database(
     entities = [SessionEntity::class, DailyProgressEntity::class, UserProfileEntity::class],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class SessionDatabase : RoomDatabase() {
@@ -193,7 +193,31 @@ abstract class SessionDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE sessions ADD COLUMN distanceMeters REAL NOT NULL DEFAULT 0.0")
                 db.execSQL("ALTER TABLE sessions ADD COLUMN caloriesBurned REAL NOT NULL DEFAULT 0.0")
-                db.execSQL("ALTER TABLE user_profile ADD COLUMN mapsApiKey TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val cursor = db.query("PRAGMA table_info(user_profile)")
+                var hasMapsApiKey = false
+                while (cursor.moveToNext()) {
+                    val nameIndex = cursor.getColumnIndex("name")
+                    if (nameIndex != -1 && cursor.getString(nameIndex) == "mapsApiKey") {
+                        hasMapsApiKey = true
+                        break
+                    }
+                }
+                cursor.close()
+                if (!hasMapsApiKey) {
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN mapsApiKey TEXT NOT NULL DEFAULT ''")
+                }
+            }
+        }
+
+        private val MIGRATION_9_11 = object : Migration(9, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_9_10.migrate(db)
+                MIGRATION_10_11.migrate(db)
             }
         }
 
@@ -203,7 +227,7 @@ abstract class SessionDatabase : RoomDatabase() {
                     context.applicationContext,
                     SessionDatabase::class.java,
                     "session_database"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_9_11)
                  .fallbackToDestructiveMigration()
                  .build()
                 INSTANCE = instance
