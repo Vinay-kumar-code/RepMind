@@ -740,6 +740,18 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                             levelInfo = LevelSystem.levelFromXp(newXp)
                             progressManager.load(levelInfo, newXp, prof)
                             progressManager.recalculateDailyProgress()
+
+                            // Auto-sync walking session to Health Connect
+                            if (healthConnectManager.isSupported && hcConnected) {
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        healthConnectManager.syncToHealthConnect()
+                                        hcStepsToday = healthConnectManager.getTodaySteps()
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
                         }
                     },
                     onBack = { nav.popBackStack() }
@@ -776,6 +788,18 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                             levelInfo = LevelSystem.levelFromXp(newXp)
                             progressManager.load(levelInfo, newXp, prof)
                             progressManager.recalculateDailyProgress()
+
+                            // Auto-sync running session to Health Connect
+                            if (healthConnectManager.isSupported && hcConnected) {
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        healthConnectManager.syncToHealthConnect()
+                                        hcStepsToday = healthConnectManager.getTodaySteps()
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
                         }
                     },
                     onBack = { nav.popBackStack() }
@@ -1946,13 +1970,15 @@ private fun ProfileScreen(
     var monthXp by remember { mutableStateOf(0f) }
     var activeDates by remember { mutableStateOf<Set<String>>(emptySet()) }
     var achievementTab by remember { mutableStateOf(0) } // 0=All, 1=Long Term, 2=Weekly
+    var todayAppSteps by remember { mutableStateOf(0L) }
+    var effectiveTodaySteps by remember { mutableStateOf(todaySteps) }
 
     fun refreshAchievements(currentSessions: List<SessionEntity>) {
         achievements = achievementManager.computeAchievements(
             currentSessions,
             emptyList(),
             streakInfo.streak,
-            todaySteps
+            effectiveTodaySteps
         )
     }
 
@@ -2005,6 +2031,16 @@ private fun ProfileScreen(
             
             activeDates = heatMapData.keys
         } catch (e: Exception) {}
+
+        // Calculate app workout steps for today
+        val appSteps = all.filter {
+            val d = parseDate(it.timestampIso)
+            d == today && (it.exercise.equals("walking", ignoreCase = true) ||
+                           it.exercise.equals("running", ignoreCase = true) ||
+                           it.exercise.equals("steps", ignoreCase = true))
+        }.sumOf { it.reps.toLong() }
+        todayAppSteps = appSteps
+        effectiveTodaySteps = maxOf(todaySteps, appSteps)
 
         // Load 7 days steps
         steps7DaysData = healthConnectManager.getLast7DaysSteps()
@@ -2103,11 +2139,48 @@ private fun ProfileScreen(
             XpStatCard("30 Days", monthXp, Modifier.weight(1f))
         }
 
-        if (isHealthConnectAvailable && isHealthConnectConnected) {
+        if (effectiveTodaySteps > 0 || (isHealthConnectAvailable && isHealthConnectConnected)) {
             Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Today's Steps", style = MaterialTheme.typography.titleMedium)
-                    Text("$todaySteps", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.DirectionsWalk, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text("Today's Steps", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        text = String.format(Locale.US, "%,d", effectiveTodaySteps),
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (todayAppSteps > 0) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = "🏃 ${String.format(Locale.US, "%,d", todayAppSteps)} steps from RepMind Walking/Running",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                    if (isHealthConnectConnected) {
+                        Text(
+                            text = "Health Connect synced ✓",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF10B981)
+                        )
+                    }
                 }
             }
         }

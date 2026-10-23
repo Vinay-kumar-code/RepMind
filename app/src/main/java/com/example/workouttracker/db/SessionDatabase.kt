@@ -64,7 +64,7 @@ interface SessionDao {
     @Query("UPDATE sessions SET syncedToNotion = 1 WHERE id IN (:ids)")
     suspend fun markSessionsSynced(ids: List<Long>)
 
-    @Query("SELECT * FROM sessions WHERE syncedToHealthConnect = 0 AND isManual = 0")
+    @Query("SELECT * FROM sessions WHERE syncedToHealthConnect = 0 AND LOWER(exercise) != 'steps'")
     suspend fun getUnsyncedToHealthConnect(): List<SessionEntity>
 
     @Query("UPDATE sessions SET syncedToHealthConnect = 1 WHERE id IN (:ids)")

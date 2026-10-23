@@ -5,6 +5,8 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
+import androidx.health.connect.client.records.DistanceRecord
+import androidx.health.connect.client.units.Length
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.example.workouttracker.db.SessionEntity
@@ -49,7 +51,9 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                 androidx.health.connect.client.permission.HealthPermission.getReadPermission(ExerciseSessionRecord::class),
                 androidx.health.connect.client.permission.HealthPermission.getWritePermission(ExerciseSessionRecord::class),
                 androidx.health.connect.client.permission.HealthPermission.getWritePermission(ActiveCaloriesBurnedRecord::class),
-                androidx.health.connect.client.permission.HealthPermission.getWritePermission(StepsRecord::class)
+                androidx.health.connect.client.permission.HealthPermission.getWritePermission(StepsRecord::class),
+                androidx.health.connect.client.permission.HealthPermission.getWritePermission(DistanceRecord::class),
+                androidx.health.connect.client.permission.HealthPermission.getReadPermission(DistanceRecord::class)
             )
         } catch (t: Throwable) {
             emptySet()
@@ -119,14 +123,14 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                 }
             }
 
-            if (daySteps == 0L) {
-                // Fallback to database step sessions
-                val dayStr = day.toString()
-                val dbSteps = allSessions.filter { s ->
-                    s.exercise.equals("steps", ignoreCase = true) && s.timestampIso.startsWith(prefix = dayStr)
-                }.sumOf { it.reps.toLong() }
-                daySteps = dbSteps
-            }
+            val dayStr = day.toString()
+            val dbSteps = allSessions.filter { s ->
+                (s.exercise.equals("steps", ignoreCase = true) ||
+                 s.exercise.equals("walking", ignoreCase = true) ||
+                 s.exercise.equals("running", ignoreCase = true)) &&
+                s.timestampIso.startsWith(prefix = dayStr)
+            }.sumOf { it.reps.toLong() }
+            daySteps = maxOf(daySteps, dbSteps)
 
             list.add(Pair(label, daySteps))
         }
@@ -239,14 +243,17 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                     endTime = endTime,
                     endZoneOffset = ZoneId.systemDefault().rules.getOffset(endTime),
                     exerciseType = hcExerciseType,
-                    title = "${session.exercise} - Track Mate"
+                    title = "${session.exercise} - RepMind"
                 )
                 
                 recordsToInsert.add(sessionRecord)
 
                 // Add ActiveCaloriesBurnedRecord
-                // Approximation: 1 XP is rough equivalent to 1 active calorie, or fallback to duration
-                val calories = (session.totalXp.toDouble()).coerceAtLeast(session.durationSeconds / 60.0 * 4.0)
+                val calories = if (session.caloriesBurned > 0.0) {
+                    session.caloriesBurned
+                } else {
+                    (session.totalXp.toDouble()).coerceAtLeast(session.durationSeconds / 60.0 * 4.0)
+                }
                 val caloriesRecord = ActiveCaloriesBurnedRecord(
                     startTime = startTime,
                     startZoneOffset = ZoneId.systemDefault().rules.getOffset(startTime),
@@ -255,6 +262,22 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                     energy = androidx.health.connect.client.units.Energy.kilocalories(calories)
                 )
                 recordsToInsert.add(caloriesRecord)
+
+                // If distance is recorded (> 0), add DistanceRecord
+                if (session.distanceMeters > 0.0) {
+                    try {
+                        val distanceRecord = DistanceRecord(
+                            startTime = startTime,
+                            startZoneOffset = ZoneId.systemDefault().rules.getOffset(startTime),
+                            endTime = endTime,
+                            endZoneOffset = ZoneId.systemDefault().rules.getOffset(endTime),
+                            distance = Length.meters(session.distanceMeters)
+                        )
+                        recordsToInsert.add(distanceRecord)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
 
                 // If running or walking, add StepsRecord based on reps
                 if (hcExerciseType == ExerciseSessionRecord.EXERCISE_TYPE_RUNNING || hcExerciseType == ExerciseSessionRecord.EXERCISE_TYPE_WALKING) {
