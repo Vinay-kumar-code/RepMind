@@ -4,6 +4,13 @@ plugins {
     id 'com.google.devtools.ksp'
 }
 
+Properties localProperties = new Properties()
+File localPropertiesFile = project.rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localProperties.load(localPropertiesFile.newDataInputStream())
+}
+def mapsApiKey = localProperties.getProperty('MAPS_API_KEY', '')
+
 android {
     namespace 'com.example.workouttracker'
     compileSdk 34
@@ -17,6 +24,8 @@ android {
         versionName "1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        manifestPlaceholders = [MAPS_API_KEY: mapsApiKey]
+        buildConfigField "String", "MAPS_API_KEY", "\"${mapsApiKey}\""
         vectorDrawables {
             useSupportLibrary true
         }
@@ -31,6 +40,7 @@ android {
 
     buildFeatures {
         compose true
+        buildConfig true
     }
     composeOptions {
         kotlinCompilerExtensionVersion '1.5.3'
@@ -99,4 +109,9 @@ dependencies {
     
     // Health Connect
     implementation 'androidx.health.connect:connect-client:1.1.0-alpha07'
+
+    // Google Maps & Location
+    implementation 'com.google.android.gms:play-services-maps:18.2.0'
+    implementation 'com.google.android.gms:play-services-location:21.0.1'
+    implementation 'com.google.maps.android:maps-compose:2.15.0'
 }

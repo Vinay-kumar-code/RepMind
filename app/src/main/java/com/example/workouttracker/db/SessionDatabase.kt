@@ -16,7 +16,9 @@ data class SessionEntity(
     val totalXp: Float,
     val syncedToNotion: Boolean = false,
     val isManual: Boolean = false,
-    val syncedToHealthConnect: Boolean = false
+    val syncedToHealthConnect: Boolean = false,
+    val distanceMeters: Double = 0.0,
+    val caloriesBurned: Double = 0.0
 )
 
 @Entity(tableName = "daily_progress")
@@ -41,7 +43,8 @@ data class UserProfileEntity(
     val customSquatGoal: Int = 10,
     val customBicepGoal: Int = 60,
     val notionApiKey: String = "",
-    val notionDbId: String = ""
+    val notionDbId: String = "",
+    val mapsApiKey: String = ""
 )
 
 @Dao
@@ -117,7 +120,7 @@ interface SessionDao {
 
 @Database(
     entities = [SessionEntity::class, DailyProgressEntity::class, UserProfileEntity::class],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class SessionDatabase : RoomDatabase() {
@@ -186,13 +189,21 @@ abstract class SessionDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN distanceMeters REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE sessions ADD COLUMN caloriesBurned REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE user_profile ADD COLUMN mapsApiKey TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): SessionDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     SessionDatabase::class.java,
                     "session_database"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                  .fallbackToDestructiveMigration()
                  .build()
                 INSTANCE = instance

@@ -53,6 +53,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.time.*
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 private data class BottomDest(val route: String, val label: String, val icon: ImageVector)
@@ -71,6 +72,7 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     val progressManager = remember { ProgressManager(repo, appScope, streakPrefs) }
     val manualWorkoutPrefs = remember { ManualWorkoutPreferences(context) }
     val xpPrefs = remember { XpPreferences(context) }
+    val stepCounterManager = remember { StepCounterManager(context) }
     
     val dailyState by progressManager.dailyState.collectAsState()
     val themeMode by themePrefs.themeMode.collectAsState()
@@ -91,6 +93,7 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
     var customBicepGoal by remember { mutableStateOf(60) }
     var notionApiKey by remember { mutableStateOf("") }
     var notionDbId by remember { mutableStateOf("") }
+    var mapsApiKey by remember { mutableStateOf("") }
 
     // Settings State
     var showLandmarks by remember { mutableStateOf(false) }
@@ -163,6 +166,12 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
             customBicepGoal = currentProf?.customBicepGoal ?: 60
             notionApiKey = currentProf?.notionApiKey ?: ""
             notionDbId = currentProf?.notionDbId ?: ""
+            mapsApiKey = currentProf?.mapsApiKey ?: ""
+            if (mapsApiKey.isNotBlank()) {
+                try {
+                    context.applicationInfo.metaData?.putString("com.google.android.geo.API_KEY", mapsApiKey)
+                } catch (_: Exception) {}
+            }
             progressManager.load(levelInfo, profileXp, currentProf)
             startDestination = if (profileName.isBlank()) "onboarding" else "dashboard"
 
@@ -257,7 +266,7 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
         BottomDest("settings", "Settings", Icons.Default.Settings)
     )
 
-    val hideBottomBarRoutes = setOf("session", "onboarding")
+    val hideBottomBarRoutes = setOf("session", "onboarding", "cardio_walking", "cardio_running")
     val backStack by nav.currentBackStackEntryAsState()
     val showBottomBar = backStack?.destination?.route !in hideBottomBarRoutes
 
@@ -327,7 +336,15 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                         progressManager = progressManager
                     )
                 }
-                composable("workouts") { WorkoutsScreen(onStart = { type -> engine.setExerciseType(type); nav.navigate("session") }) }
+                composable("workouts") {
+                    WorkoutsScreen(
+                        onStart = { type -> engine.setExerciseType(type); nav.navigate("session") },
+                        onStartCardio = { type ->
+                            if (type == CardioWorkoutType.WALKING) nav.navigate("cardio_walking")
+                            else nav.navigate("cardio_running")
+                        }
+                    )
+                }
                 composable("profile") { 
                     ProfileScreen(
                         name = profileName, 
@@ -593,6 +610,19 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                         appScope.launch(Dispatchers.IO) {
                             progressManager.recalculateDailyProgress()
                         }
+                    },
+                    mapsApiKey = mapsApiKey,
+                    onSaveMapsApiKey = { key ->
+                        mapsApiKey = key
+                        appScope.launch(Dispatchers.IO) {
+                            repo.updateMapsApiKey(key)
+                            try {
+                                context.applicationInfo.metaData?.putString("com.google.android.geo.API_KEY", key)
+                            } catch (_: Exception) {}
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "Google Maps API Key saved", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 )
                 
@@ -679,6 +709,78 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                     }
                 )
             }
+            composable("cardio_walking") {
+                CardioWorkoutScreen(
+                    workoutType = CardioWorkoutType.WALKING,
+                    stepCounterManager = stepCounterManager,
+                    xpRates = xpRates,
+                    mapsApiKey = mapsApiKey,
+                    onOpenSettings = { nav.navigate("settings") },
+                    onSessionSaved = { steps, distanceMeters, durationSeconds, caloriesBurned, earnedXp ->
+                        appScope.launch {
+                            val istZone = ZoneId.of("Asia/Kolkata")
+                            val now = ZonedDateTime.now(istZone)
+                            val timestampIso = now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                            val session = SessionEntity(
+                                timestampIso = timestampIso,
+                                exercise = "Walking",
+                                reps = steps,
+                                durationSeconds = durationSeconds.toFloat(),
+                                totalXp = earnedXp,
+                                distanceMeters = distanceMeters,
+                                caloriesBurned = caloriesBurned,
+                                isManual = false
+                            )
+                            repo.insertSession(session)
+                            val prof = withContext(Dispatchers.IO) { repo.getProfile() }
+                            val currentXp = prof?.totalXp ?: 0f
+                            val newXp = currentXp + earnedXp
+                            repo.upsertProfile(newXp)
+                            profileXp = newXp
+                            levelInfo = LevelSystem.levelFromXp(newXp)
+                            progressManager.load(levelInfo, newXp, prof)
+                            progressManager.recalculateDailyProgress()
+                        }
+                    },
+                    onBack = { nav.popBackStack() }
+                )
+            }
+            composable("cardio_running") {
+                CardioWorkoutScreen(
+                    workoutType = CardioWorkoutType.RUNNING,
+                    stepCounterManager = stepCounterManager,
+                    xpRates = xpRates,
+                    mapsApiKey = mapsApiKey,
+                    onOpenSettings = { nav.navigate("settings") },
+                    onSessionSaved = { steps, distanceMeters, durationSeconds, caloriesBurned, earnedXp ->
+                        appScope.launch {
+                            val istZone = ZoneId.of("Asia/Kolkata")
+                            val now = ZonedDateTime.now(istZone)
+                            val timestampIso = now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                            val session = SessionEntity(
+                                timestampIso = timestampIso,
+                                exercise = "Running",
+                                reps = steps,
+                                durationSeconds = durationSeconds.toFloat(),
+                                totalXp = earnedXp,
+                                distanceMeters = distanceMeters,
+                                caloriesBurned = caloriesBurned,
+                                isManual = false
+                            )
+                            repo.insertSession(session)
+                            val prof = withContext(Dispatchers.IO) { repo.getProfile() }
+                            val currentXp = prof?.totalXp ?: 0f
+                            val newXp = currentXp + earnedXp
+                            repo.upsertProfile(newXp)
+                            profileXp = newXp
+                            levelInfo = LevelSystem.levelFromXp(newXp)
+                            progressManager.load(levelInfo, newXp, prof)
+                            progressManager.recalculateDailyProgress()
+                        }
+                    },
+                    onBack = { nav.popBackStack() }
+                )
+            }
         }
     }
 }
@@ -706,7 +808,10 @@ private fun OnboardingScreen(onContinue: (String) -> Unit) {
 }
 
 @Composable
-private fun WorkoutsScreen(onStart: (ExerciseType) -> Unit) {
+private fun WorkoutsScreen(
+    onStart: (ExerciseType) -> Unit,
+    onStartCardio: (CardioWorkoutType) -> Unit
+) {
     Column(
         Modifier
             .fillMaxSize()
@@ -718,6 +823,22 @@ private fun WorkoutsScreen(onStart: (ExerciseType) -> Unit) {
         MotivationCard()
         Text("Choose Workout", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         
+        Text("Outdoor & Cardio (GPS & Steps)", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+        CardioWorkoutCard(
+            title = "Walking",
+            desc = "Track outdoor walk, live steps, route & calories",
+            icon = Icons.Default.DirectionsWalk,
+            accentColor = Color(0xFF10B981),
+            onClick = { onStartCardio(CardioWorkoutType.WALKING) }
+        )
+        CardioWorkoutCard(
+            title = "Running",
+            desc = "Track outdoor run, pace, distance & cadence",
+            icon = Icons.Default.DirectionsRun,
+            accentColor = Color(0xFFFF5722),
+            onClick = { onStartCardio(CardioWorkoutType.RUNNING) }
+        )
+
         Text("Essentials & Strength", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
         WorkoutCard("Pushups", "Upper body strength & chest focus", ExerciseType.PUSHUP, onStart)
         WorkoutCard("Squats", "Lower body explosive power & quads", ExerciseType.SQUAT, onStart)
@@ -749,6 +870,45 @@ private fun WorkoutCard(title: String, desc: String, type: ExerciseType, onStart
         Column(Modifier.padding(24.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(desc, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun CardioWorkoutCard(
+    title: String,
+    desc: String,
+    icon: ImageVector,
+    accentColor: Color,
+    onClick: () -> Unit
+) {
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(20.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Surface(
+                color = accentColor.copy(alpha = 0.15f),
+                shape = CircleShape,
+                modifier = Modifier.size(50.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, tint = accentColor, modifier = Modifier.size(28.dp))
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(2.dp))
+                Text(desc, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.Default.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -788,7 +948,9 @@ private fun SettingsScreen(
     onSyncNotion: (onProgress: (current: Int, total: Int) -> Unit, onShowDialog: (String, String) -> Unit) -> Unit,
     onRetrieveNotion: (onProgress: (fetchedCount: Int) -> Unit, onShowDialog: (String, String) -> Unit) -> Unit,
     onShareProfile: () -> Unit,
-    onStreakUpdated: () -> Unit = {}
+    onStreakUpdated: () -> Unit = {},
+    mapsApiKey: String = "",
+    onSaveMapsApiKey: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1505,6 +1667,62 @@ private fun SettingsScreen(
             }
         }
         
+        // Google Maps Platform Integration
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Place, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("Google Maps Platform", style = MaterialTheme.typography.titleMedium)
+                }
+                Text(
+                    "Set your Google Maps Platform API key to enable live GPS route tracking and map rendering during Walking and Running workouts.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                val hasKey = mapsApiKey.isNotBlank()
+                var isEditingMapsKey by remember(hasKey) { mutableStateOf(!hasKey) }
+
+                if (isEditingMapsKey) {
+                    var tempMapsKey by remember(mapsApiKey) { mutableStateOf(mapsApiKey) }
+
+                    OutlinedTextField(
+                        value = tempMapsKey,
+                        onValueChange = { tempMapsKey = it },
+                        label = { Text("Maps API Key") },
+                        placeholder = { Text("Enter Google Maps API key") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Button(
+                        onClick = {
+                            onSaveMapsApiKey(tempMapsKey.trim())
+                            isEditingMapsKey = false
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Save Maps API Key")
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = "••••••••••••••••••••••••••••••••",
+                        onValueChange = { },
+                        label = { Text("Maps API Key (Configured ✓)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = false
+                    )
+
+                    Button(
+                        onClick = { isEditingMapsKey = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Edit Maps API Key")
+                    }
+                }
+            }
+        }
+
         // Data Management
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {

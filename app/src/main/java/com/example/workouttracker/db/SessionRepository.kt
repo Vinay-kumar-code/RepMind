@@ -79,6 +79,16 @@ class SessionRepository(private val dao: SessionDao) {
         dao.upsertProfile(profile)
     }
     
+    suspend fun updateMapsApiKey(apiKey: String) {
+        val existing = dao.getProfile()
+        val profile = existing?.copy(
+            mapsApiKey = apiKey
+        ) ?: UserProfileEntity(
+            mapsApiKey = apiKey
+        )
+        dao.upsertProfile(profile)
+    }
+
     suspend fun getProfile(): UserProfileEntity? = dao.getProfile()
 
     suspend fun resetAllProgress() {

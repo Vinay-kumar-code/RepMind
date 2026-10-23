@@ -213,7 +213,11 @@ fun HistoryScreen(
                                 headlineContent = { Text(name, fontWeight = FontWeight.Bold) },
                                 supportingContent = { 
                                     val durationMins = (session.durationSeconds / 60).toInt()
-                                    val details = if (durationMins > 0 && session.reps > 0) {
+                                    val isCardio = session.exercise.equals("Walking", ignoreCase = true) || session.exercise.equals("Running", ignoreCase = true) || session.distanceMeters > 0
+                                    val details = if (isCardio) {
+                                        val km = session.distanceMeters / 1000.0
+                                        "${session.reps} steps • ${String.format(Locale.US, "%.2f", km)} km • $durationMins mins • ${String.format(Locale.US, "%.1f", session.totalXp)} XP"
+                                    } else if (durationMins > 0 && session.reps > 0) {
                                         "${session.reps} reps • $durationMins mins • ${String.format(Locale.US, "%.2f", session.totalXp)} XP"
                                     } else if (durationMins > 0) {
                                         "$durationMins mins • ${String.format(Locale.US, "%.2f", session.totalXp)} XP"

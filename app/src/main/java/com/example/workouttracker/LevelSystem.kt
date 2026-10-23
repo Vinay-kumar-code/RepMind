@@ -123,4 +123,26 @@ object LevelSystem {
         val mult = rates?.multiplier ?: 1.0f
         return minutes * rate * mult
     }
+
+    fun xpForCardio(
+        workoutType: CardioWorkoutType,
+        steps: Int,
+        distanceMeters: Double,
+        durationSeconds: Long,
+        rates: XpRates? = null
+    ): Float {
+        val mult = rates?.multiplier ?: 1.0f
+        val km = (distanceMeters / 1000.0).toFloat()
+        val minutes = (durationSeconds / 60.0).toFloat()
+        val xpFromDistance = when (workoutType) {
+            CardioWorkoutType.WALKING -> km * 1.0f
+            CardioWorkoutType.RUNNING -> km * 2.0f
+        }
+        val xpFromTime = when (workoutType) {
+            CardioWorkoutType.WALKING -> minutes * 0.05f
+            CardioWorkoutType.RUNNING -> minutes * 0.10f
+        }
+        val total = (xpFromDistance + xpFromTime).coerceAtLeast(0.1f)
+        return total * mult
+    }
 }
