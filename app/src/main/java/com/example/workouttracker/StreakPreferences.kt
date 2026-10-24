@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.time.LocalDate
+import java.time.ZoneId
 
 data class StreakInfo(
     val streak: Int,
@@ -21,8 +22,10 @@ class StreakPreferences(context: Context) {
     companion object {
         private const val KEY_MANUAL_STREAK = "manual_streak_val"
         private const val KEY_MANUAL_DATE = "manual_streak_date"
+        private const val KEY_MANUAL_OFFSET = "manual_streak_offset"
         private const val KEY_FROZEN_DATES = "frozen_dates_set"
         private const val KEY_USED_FREEZES = "used_freezes_count"
+        private val IST_ZONE = ZoneId.of("Asia/Kolkata")
     }
 
     private val _streakInfo = MutableStateFlow(calculateStreakInfo(0))
@@ -47,17 +50,16 @@ class StreakPreferences(context: Context) {
 
     private fun calculateStreakInfo(calculatedStreak: Int): StreakInfo {
         val manual = getManualStreak()
-        val manualDate = getManualDate()
         val frozen = getFrozenDates()
         val used = getUsedFreezes()
 
-        val effectiveStreak = if (manual != null && manualDate != null) {
-            try {
-                val setDate = LocalDate.parse(manualDate)
-                val today = LocalDate.now()
-                val daysPassed = today.toEpochDay() - setDate.toEpochDay()
-                if (daysPassed >= 0) (manual + daysPassed.toInt()).coerceAtLeast(0) else manual
-            } catch (e: Exception) { manual }
+        val effectiveStreak = if (manual != null) {
+            val offset = if (prefs.contains(KEY_MANUAL_OFFSET)) {
+                prefs.getInt(KEY_MANUAL_OFFSET, 0)
+            } else {
+                (manual - calculatedStreak).coerceAtLeast(0)
+            }
+            (calculatedStreak + offset).coerceAtLeast(0)
         } else {
             calculatedStreak
         }
@@ -80,17 +82,20 @@ class StreakPreferences(context: Context) {
         return info
     }
 
-    fun setManualStreak(streak: Int) {
+    fun setManualStreak(streak: Int, currentCalculatedStreak: Int = 0) {
+        val offset = (streak - currentCalculatedStreak).coerceAtLeast(0)
         prefs.edit()
             .putInt(KEY_MANUAL_STREAK, streak)
-            .putString(KEY_MANUAL_DATE, LocalDate.now().toString())
+            .putInt(KEY_MANUAL_OFFSET, offset)
+            .putString(KEY_MANUAL_DATE, LocalDate.now(IST_ZONE).toString())
             .apply()
-        loadStreakInfo(streak)
+        loadStreakInfo(currentCalculatedStreak)
     }
 
     fun resetToAutoStreak(calculatedStreak: Int) {
         prefs.edit()
             .remove(KEY_MANUAL_STREAK)
+            .remove(KEY_MANUAL_OFFSET)
             .remove(KEY_MANUAL_DATE)
             .apply()
         loadStreakInfo(calculatedStreak)

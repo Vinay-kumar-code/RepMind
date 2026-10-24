@@ -642,9 +642,10 @@ fun WorkoutApp(repo: SessionRepository, themePrefs: ThemePreferences) {
                             }
                             
                             appScope.launch(Dispatchers.IO) {
+                                val istZone = ZoneId.of("Asia/Kolkata")
                                 val isoTime = dateMs?.let { 
-                                    Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME) 
-                                } ?: OffsetDateTime.now().format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                                    Instant.ofEpochMilli(it).atZone(istZone).format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME) 
+                                } ?: ZonedDateTime.now(istZone).format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
                                 
                                 val entity = SessionEntity(
                                     timestampIso = isoTime,
@@ -1104,7 +1105,7 @@ private fun SettingsScreen(
                 Button(
                     onClick = {
                         val count = (streakValText.toIntOrNull() ?: 0).coerceAtLeast(0)
-                        streakPrefs.setManualStreak(count)
+                        streakPrefs.setManualStreak(count, streakInfo.streak)
                         onStreakUpdated()
                         showManualStreakDialog = false
                         Toast.makeText(context, "Streak updated to $count days! 🔥", Toast.LENGTH_SHORT).show()

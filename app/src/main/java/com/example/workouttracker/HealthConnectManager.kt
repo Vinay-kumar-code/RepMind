@@ -74,7 +74,8 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
     suspend fun getTodaySteps(): Long = withContext(Dispatchers.IO) {
         val client = getClient() ?: return@withContext 0L
         try {
-            val startOfDay = ZonedDateTime.now().truncatedTo(ChronoUnit.DAYS).toInstant()
+            val istZone = ZoneId.of("Asia/Kolkata")
+            val startOfDay = ZonedDateTime.now(istZone).truncatedTo(ChronoUnit.DAYS).toInstant()
             val now = Instant.now()
             
             val response = client.readRecords(
@@ -96,7 +97,8 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
 
     suspend fun getLast7DaysSteps(): List<Pair<String, Long>> = withContext(Dispatchers.IO) {
         val list = mutableListOf<Pair<String, Long>>()
-        val today = LocalDate.now()
+        val istZone = ZoneId.of("Asia/Kolkata")
+        val today = LocalDate.now(istZone)
         val client = getClient()
 
         val allSessions = repo.getAllSessions()
@@ -108,8 +110,8 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
 
             if (client != null && hasPermissions()) {
                 try {
-                    val startOfDay = day.atStartOfDay(ZoneId.systemDefault()).toInstant()
-                    val endOfDay = if (i == 0) Instant.now() else day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant()
+                    val startOfDay = day.atStartOfDay(istZone).toInstant()
+                    val endOfDay = if (i == 0) Instant.now() else day.plusDays(1).atStartOfDay(istZone).toInstant()
 
                     val response = client.readRecords(
                         ReadRecordsRequest(
@@ -227,6 +229,9 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                 }
                 
                 val endTime = startTime.plusSeconds(session.durationSeconds.toLong().coerceAtLeast(1L))
+                val istZone = ZoneId.of("Asia/Kolkata")
+                val startOffset = istZone.rules.getOffset(startTime)
+                val endOffset = istZone.rules.getOffset(endTime)
                 
                 val hcExerciseType = when (session.exercise.lowercase()) {
                     "running" -> ExerciseSessionRecord.EXERCISE_TYPE_RUNNING
@@ -239,9 +244,9 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
 
                 val sessionRecord = ExerciseSessionRecord(
                     startTime = startTime,
-                    startZoneOffset = ZoneId.systemDefault().rules.getOffset(startTime),
+                    startZoneOffset = startOffset,
                     endTime = endTime,
-                    endZoneOffset = ZoneId.systemDefault().rules.getOffset(endTime),
+                    endZoneOffset = endOffset,
                     exerciseType = hcExerciseType,
                     title = "${session.exercise} - RepMind"
                 )
@@ -256,9 +261,9 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                 }
                 val caloriesRecord = ActiveCaloriesBurnedRecord(
                     startTime = startTime,
-                    startZoneOffset = ZoneId.systemDefault().rules.getOffset(startTime),
+                    startZoneOffset = startOffset,
                     endTime = endTime,
-                    endZoneOffset = ZoneId.systemDefault().rules.getOffset(endTime),
+                    endZoneOffset = endOffset,
                     energy = androidx.health.connect.client.units.Energy.kilocalories(calories)
                 )
                 recordsToInsert.add(caloriesRecord)
@@ -268,9 +273,9 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                     try {
                         val distanceRecord = DistanceRecord(
                             startTime = startTime,
-                            startZoneOffset = ZoneId.systemDefault().rules.getOffset(startTime),
+                            startZoneOffset = startOffset,
                             endTime = endTime,
-                            endZoneOffset = ZoneId.systemDefault().rules.getOffset(endTime),
+                            endZoneOffset = endOffset,
                             distance = Length.meters(session.distanceMeters)
                         )
                         recordsToInsert.add(distanceRecord)
@@ -284,9 +289,9 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                     if (session.reps > 0) {
                         val stepsRecord = StepsRecord(
                             startTime = startTime,
-                            startZoneOffset = ZoneId.systemDefault().rules.getOffset(startTime),
+                            startZoneOffset = startOffset,
                             endTime = endTime,
-                            endZoneOffset = ZoneId.systemDefault().rules.getOffset(endTime),
+                            endZoneOffset = endOffset,
                             count = session.reps.toLong()
                         )
                         recordsToInsert.add(stepsRecord)

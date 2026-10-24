@@ -87,7 +87,7 @@ class StepCounterManager(private val context: Context) : SensorEventListener {
     private var isPaused: Boolean = false
 
     private var timerJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private var scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     var startedAt: ZonedDateTime? = null
         private set
@@ -103,6 +103,10 @@ class StepCounterManager(private val context: Context) : SensorEventListener {
      */
     fun start(type: CardioWorkoutType) {
         if (isActive) return
+
+        if (!scope.isActive) {
+            scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        }
 
         workoutType = type
         baselineSteps = -1
@@ -143,6 +147,10 @@ class StepCounterManager(private val context: Context) : SensorEventListener {
      */
     fun resume() {
         if (!isActive || !isPaused) return
+
+        if (!scope.isActive) {
+            scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        }
 
         isPaused = false
         baselineSteps = -1 // will be re-baselined on next sensor event
@@ -267,13 +275,21 @@ class StepCounterManager(private val context: Context) : SensorEventListener {
         else accumulatedSeconds + currentSegmentSeconds()
 
     private fun emitMetrics(steps: Int? = null) {
-        val currentSteps = steps ?: _metrics.value.steps
+        val sensorSteps = steps ?: _metrics.value.steps
         val elapsed = totalElapsedSeconds()
 
         val strideLength = when (workoutType) {
             CardioWorkoutType.WALKING -> STRIDE_WALKING_M
             CardioWorkoutType.RUNNING -> STRIDE_RUNNING_M
         }
+
+        // If hardware sensor didn't report steps but GPS moved, estimate steps based on GPS distance
+        val currentSteps = if (sensorSteps == 0 && useGpsDistance && gpsDistanceMeters > 0.0) {
+            (gpsDistanceMeters / strideLength).toInt()
+        } else {
+            sensorSteps
+        }
+
         val stepDistanceMeters = currentSteps * strideLength
 
         // Prefer GPS distance if available and non-zero, otherwise step-based distance

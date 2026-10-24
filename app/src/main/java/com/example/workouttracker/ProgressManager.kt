@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * ProgressManager keeps track of today's goals, streak and live progress.
@@ -37,7 +38,11 @@ class ProgressManager(
 
     private var cachedGoals: DailyGoals = DailyGoals(10,10,60)
 
-    private fun today(): String = LocalDate.now().toString()
+    companion object {
+        private val IST_ZONE = ZoneId.of("Asia/Kolkata")
+    }
+
+    private fun today(): String = LocalDate.now(IST_ZONE).toString()
 
     fun load(initialLevelInfo: LevelSystem.LevelInfo, totalXp: Float, profile: com.example.workouttracker.db.UserProfileEntity?) {
         updateCachedGoals(initialLevelInfo, profile)
@@ -96,7 +101,7 @@ class ProgressManager(
         // 3. Add all frozen dates
         activeDates.addAll(frozenDates)
 
-        val today = LocalDate.now()
+        val today = LocalDate.now(IST_ZONE)
         val todayStr = today.toString()
         val todayDp = repo.getDaily(todayStr)
         val todayGoalsMet = (todayDp?.goalsMet == true) || frozenDates.contains(todayStr)
@@ -204,7 +209,7 @@ class ProgressManager(
     suspend fun getWeeklyProgress(): List<Float> {
         val weekly = MutableList(7) { 0f }
         val recents = repo.getRecentDaily(7)
-        val today = LocalDate.now()
+        val today = LocalDate.now(IST_ZONE)
         val startOfWeek = today.minusDays(today.dayOfWeek.value.toLong() - 1) // Monday
 
         for (dp in recents) {
@@ -239,17 +244,21 @@ class ProgressManager(
                 lastUpdatedIso = java.time.Instant.now().toString()
             )
             
-            val ex = session.exercise.lowercase()
+            val ex = session.exercise.lowercase().trim().replace("-", "_").replace(" ", "_")
             var push = dp.pushups
             var squat = dp.squats
             var bLeft = dp.bicepLeft
             var bRight = dp.bicepRight
             
-            when (ex) {
-                "pushup", "pushups" -> push += session.reps
-                "squat", "squats" -> squat += session.reps
-                "bicep_left", "bicep curl - left", "bicep curls" -> bLeft += session.reps
-                "bicep_right", "bicep curl - right" -> bRight += session.reps
+            when {
+                ex.startsWith("pushup") -> push += session.reps
+                ex.startsWith("squat") -> squat += session.reps
+                ex.contains("left") && ex.contains("bicep") -> bLeft += session.reps
+                ex.contains("right") && ex.contains("bicep") -> bRight += session.reps
+                ex.contains("bicep") -> {
+                    bLeft += session.reps / 2
+                    bRight += (session.reps + 1) / 2
+                }
             }
             
             dailyMap[date] = dp.copy(
@@ -261,6 +270,7 @@ class ProgressManager(
         }
         
         val sortedDates = dailyMap.keys.sorted()
+        val sessionsByDate = allSessions.groupBy { sessionDate(it.timestampIso) }
         var runningXp = 0f
         
         for (d in sortedDates) {
@@ -284,7 +294,7 @@ class ProgressManager(
             repo.upsertDaily(updated)
             
             // Add today's XP to running total for next days
-            runningXp += allSessions.filter { sessionDate(it.timestampIso) == d }.sumOf { it.totalXp.toDouble() }.toFloat()
+            runningXp += sessionsByDate[d]?.sumOf { it.totalXp.toDouble() }?.toFloat() ?: 0f
         }
         
         val date = today()
@@ -302,9 +312,9 @@ class ProgressManager(
     private fun sessionDate(iso: String): String {
         return try {
             val instant = try { java.time.OffsetDateTime.parse(iso).toInstant() } catch (_: Exception) { java.time.Instant.parse(iso) }
-            instant.atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()
+            instant.atZone(IST_ZONE).toLocalDate().toString()
         } catch (e: Exception) {
-            java.time.LocalDate.now().toString()
+            java.time.LocalDate.now(IST_ZONE).toString()
         }
     }
 }

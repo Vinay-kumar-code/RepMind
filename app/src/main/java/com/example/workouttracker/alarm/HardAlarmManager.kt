@@ -68,7 +68,8 @@ class HardAlarmManager(private val context: Context) {
         const val ACTION_ALARM_TRIGGER = "com.example.workouttracker.action.HARD_ALARM_TRIGGER"
 
         fun normalizeKey(name: String): String {
-            return when (name.lowercase().trim().replace(" ", "_")) {
+            val clean = name.lowercase().trim().replace("-", "_").replace(" ", "_").replace("__", "_")
+            return when (clean) {
                 "pushup", "pushups" -> "pushups"
                 "squat", "squats" -> "squats"
                 "plank", "planks" -> "plank"
@@ -82,7 +83,11 @@ class HardAlarmManager(private val context: Context) {
                 "shoulder_press", "shoulder_presses" -> "shoulder_press"
                 "pullup", "pullups" -> "pullups"
                 "leg_raise", "leg_raises" -> "leg_raises"
-                else -> name.lowercase().trim().replace(" ", "_")
+                "bicep_curl", "bicep_curls", "bicep_curl_left", "bicep_curl_right",
+                "bicep_curls_left", "bicep_curls_right", "bicep_left", "bicep_right", "biceps" -> "bicep_curls"
+                "walking", "walk" -> "walking"
+                "running", "run" -> "running"
+                else -> clean
             }
         }
     }

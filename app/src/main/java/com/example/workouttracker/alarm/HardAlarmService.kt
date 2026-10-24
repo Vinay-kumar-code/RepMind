@@ -102,10 +102,12 @@ class HardAlarmService : Service() {
     }
 
     private fun startAlarmSoundAndVibration() {
-        // Acquire WakeLock
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RepMind:HardAlarmWakeLock").apply {
-            acquire(30 * 60 * 1000L) // 30 mins max timeout
+        // Acquire WakeLock if not already held
+        if (wakeLock == null) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RepMind:HardAlarmWakeLock").apply {
+                acquire(30 * 60 * 1000L) // 30 mins max timeout
+            }
         }
 
         // Enforce Max Volume
@@ -115,44 +117,49 @@ class HardAlarmService : Service() {
         audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxAlarmVol, 0)
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxMusicVol, 0)
 
-        // Play Alarm Audio
-        try {
-            var alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            if (alarmUri == null) {
-                alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            }
-            if (alarmUri == null) {
-                alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            }
+        // Play Alarm Audio if not already initialized
+        if (mediaPlayer == null) {
+            try {
+                var alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                if (alarmUri == null) {
+                    alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                }
+                if (alarmUri == null) {
+                    alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                }
 
-            mediaPlayer = MediaPlayer().apply {
-                setDataSource(this@HardAlarmService, alarmUri)
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                isLooping = true
-                prepare()
-                start()
+                mediaPlayer = MediaPlayer().apply {
+                    setDataSource(this@HardAlarmService, alarmUri)
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    isLooping = true
+                    prepare()
+                    start()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
 
-        // Start Vibration
-        vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        // Start Vibration if not already started
+        if (vibrator == null) {
+            vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
             val pattern = longArrayOf(0, 800, 400, 800, 400)
-            vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator?.vibrate(longArrayOf(0, 800, 400, 800, 400), 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(pattern, 0)
+            }
         }
     }
 
     private fun startVolumeEnforcer() {
+        if (volumeEnforcerJob?.isActive == true) return
         volumeEnforcerJob?.cancel()
         volumeEnforcerJob = serviceScope.launch {
             val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager

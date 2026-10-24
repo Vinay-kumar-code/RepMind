@@ -229,9 +229,6 @@ fun CardioWorkoutScreen(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             stopLocationUpdates()
-            if (!metrics.isActive) {
-                stepCounterManager.destroy()
-            }
         }
     }
 
