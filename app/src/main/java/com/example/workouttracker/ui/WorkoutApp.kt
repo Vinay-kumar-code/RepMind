@@ -869,6 +869,7 @@ private fun WorkoutsScreen(
         WorkoutCard("Squats", "Lower body explosive power & quads", ExerciseType.SQUAT, onStart)
         WorkoutCard("Lunges", "Leg strength, balance & hip mobility", ExerciseType.LUNGES, onStart)
         WorkoutCard("Glute Bridges", "Posterior chain & glute activation", ExerciseType.GLUTE_BRIDGES, onStart)
+        WorkoutCard("Calf Raises", "Lower leg strength & ankle plantarflexion", ExerciseType.CALF_RAISES, onStart)
         
         Text("Arms & Upper Body", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
         WorkoutCard("Bicep Curl - Left", "Isolate left arm bicep contraction", ExerciseType.BICEP_LEFT, onStart)
@@ -882,8 +883,11 @@ private fun WorkoutsScreen(
         WorkoutCard("Plank ⏱️", "Isometric hold duration & straight-line posture", ExerciseType.PLANK, onStart)
         WorkoutCard("Crunches", "Abdominal core compression", ExerciseType.CRUNCHES, onStart)
         WorkoutCard("Leg Raises", "Lower abs & hip flexor control", ExerciseType.LEG_RAISES, onStart)
+        WorkoutCard("Russian Twists", "Rotational core strength & oblique power", ExerciseType.RUSSIAN_TWISTS, onStart)
         
         Text("Cardio & Agility", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+        WorkoutCard("Burpees", "Full body explosive conditioning & cardio", ExerciseType.BURPEES, onStart)
+        WorkoutCard("Mountain Climbers", "Dynamic core drive & cardiovascular endurance", ExerciseType.MOUNTAIN_CLIMBERS, onStart)
         WorkoutCard("High Knees", "High-intensity cardio & sprint power", ExerciseType.HIGH_KNEES, onStart)
         WorkoutCard("Jumping Jacks", "Full body rhythm & aerobic endurance", ExerciseType.JUMPING_JACKS, onStart)
     }
@@ -1232,7 +1236,11 @@ private fun SettingsScreen(
                     Triple("lunges", "Lunges", 20),
                     Triple("shoulder_press", "Shoulder Press", 15),
                     Triple("pullups", "Pullups", 8),
-                    Triple("leg_raises", "Leg Raises", 20)
+                    Triple("leg_raises", "Leg Raises", 20),
+                    Triple("burpees", "Burpees", 10),
+                    Triple("mountain_climbers", "Mountain Climbers", 25),
+                    Triple("russian_twists", "Russian Twists", 20),
+                    Triple("calf_raises", "Calf Raises", 25)
                 )
 
                 availableWorkouts.forEach { (key, label, defaultCount) ->

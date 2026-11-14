@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -209,7 +210,10 @@ fun WorkoutSessionScreen(
                     .clip(RoundedCornerShape(24.dp))
                     .border(2.dp, Color(0xFF8A2387).copy(alpha = 0.5f), RoundedCornerShape(24.dp))
             ) {
-                val camSelector = if (exercise == ExerciseType.PULLUP) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+                var isBackCamera by remember(exercise) {
+                    mutableStateOf(exercise == ExerciseType.PULLUP || exercise == ExerciseType.BURPEES)
+                }
+                val camSelector = if (isBackCamera) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
                 key(camSelector) {
                     PreviewCameraView(
                         engine = engine,
@@ -223,19 +227,33 @@ fun WorkoutSessionScreen(
                 // Top floating pills inside camera
                 Row(
                     Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
                         color = Color.Black.copy(alpha = 0.4f),
                         shape = RoundedCornerShape(16.dp)
                     ) {
-                        Text("⛶ Frame your body", modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White, fontSize = 12.sp)
+                        Text(
+                            if (exercise == ExerciseType.BURPEES) "⛶ Full Body in Frame" else "⛶ Frame your body",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            color = Color.White,
+                            fontSize = 12.sp
+                        )
                     }
                     Surface(
-                        color = Color.Black.copy(alpha = 0.4f),
-                        shape = RoundedCornerShape(16.dp)
+                        color = Color.Black.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { isBackCamera = !isBackCamera }
                     ) {
-                        Text("☀ Good lighting", modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White, fontSize = 12.sp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Default.Cameraswitch, "Switch Camera", tint = Color.White, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (isBackCamera) "Back" else "Front", color = Color.White, fontSize = 12.sp)
+                        }
                     }
                 }
 
@@ -251,6 +269,10 @@ fun WorkoutSessionScreen(
                     val color = when {
                         isPlank && isHoldingPlank -> Color(0xFF00E676)
                         isPlank && feedback.stage == "misaligned" -> Color(0xFFFF9100)
+                        exercise == ExerciseType.BURPEES && feedback.stage == "down" -> Color(0xFF00E676)
+                        exercise == ExerciseType.MOUNTAIN_CLIMBERS && feedback.stage == "holding" -> Color(0xFF00E676)
+                        exercise == ExerciseType.RUSSIAN_TWISTS && feedback.stage == "down" -> Color(0xFF00E676)
+                        exercise == ExerciseType.CALF_RAISES && feedback.stage == "up" -> Color(0xFF00E676)
                         rangeOk -> Color.Green
                         else -> Color.Yellow
                     }
@@ -292,19 +314,34 @@ fun WorkoutSessionScreen(
             // Middle section (Go Deeper & Subtitle / Plank Form)
             val isPlank = exercise == ExerciseType.PLANK
             val isHoldingPlank = feedback.stage == "holding"
-            val pillColor = when {
-                isPlank && isHoldingPlank -> Color(0xFF4CAF50)
-                isPlank && feedback.stage == "misaligned" -> Color(0xFFFF7043)
-                isPlank -> Color(0xFF8A2387)
-                feedback.rangeOk -> Color(0xFF4CAF50)
-                else -> Color(0xFF8A2387)
-            }
-            val pillText = when {
-                isPlank && isHoldingPlank -> "Holding Plank (${feedback.formScore}%)"
-                isPlank && feedback.stage == "misaligned" -> "Align Body Straight!"
-                isPlank -> "Get in Plank Position"
-                feedback.rangeOk -> "Good Form!"
-                else -> "Go Deeper!"
+            val (pillColor, pillText) = when (exercise) {
+                ExerciseType.PLANK -> when {
+                    isHoldingPlank -> Color(0xFF4CAF50) to "Holding Plank (${feedback.formScore}%)"
+                    feedback.stage == "misaligned" -> Color(0xFFFF7043) to "Align Body Straight!"
+                    else -> Color(0xFF8A2387) to "Get in Plank Position"
+                }
+                ExerciseType.BURPEES -> when (feedback.stage) {
+                    "down" -> Color(0xFF4CAF50) to "Jump Back Up!"
+                    "up" -> Color(0xFF8A2387) to "Drop to Plank!"
+                    else -> Color(0xFF8A2387) to "Drop to Floor & Jump!"
+                }
+                ExerciseType.MOUNTAIN_CLIMBERS -> when (feedback.stage) {
+                    "holding" -> Color(0xFF4CAF50) to "Drive Alternate Knee!"
+                    else -> Color(0xFF8A2387) to "Plank & Drive Knees!"
+                }
+                ExerciseType.RUSSIAN_TWISTS -> when (feedback.stage) {
+                    "down" -> Color(0xFF4CAF50) to "Twist to Opposite Side!"
+                    else -> Color(0xFF8A2387) to "Rotate Left to Right!"
+                }
+                ExerciseType.CALF_RAISES -> when (feedback.stage) {
+                    "up" -> Color(0xFF4CAF50) to "Hold & Lower Heels!"
+                    else -> Color(0xFF8A2387) to "Elevate Heels on Toes!"
+                }
+                else -> when {
+                    feedback.validDepth -> Color(0xFF4CAF50) to "Push Back Up!"
+                    feedback.rangeOk -> Color(0xFF4CAF50) to "Good Form!"
+                    else -> Color(0xFF8A2387) to "Go Deeper!"
+                }
             }
             
             Box(
@@ -471,9 +508,10 @@ fun WorkoutSessionScreen(
                     
                     val categories = mapOf(
                         "Essentials" to listOf(ExerciseType.PUSHUP, ExerciseType.SQUAT, ExerciseType.LUNGES),
+                        "Lower Body" to listOf(ExerciseType.CALF_RAISES, ExerciseType.GLUTE_BRIDGES),
                         "Upper Body" to listOf(ExerciseType.SHOULDER_PRESS, ExerciseType.BICEP_LEFT, ExerciseType.BICEP_RIGHT, ExerciseType.TRICEP_DIPS, ExerciseType.LATERAL_RAISES, ExerciseType.PULLUP),
-                        "Core & Abs" to listOf(ExerciseType.PLANK, ExerciseType.CRUNCHES, ExerciseType.LEG_RAISES),
-                        "Cardio & Agility" to listOf(ExerciseType.JUMPING_JACKS, ExerciseType.HIGH_KNEES)
+                        "Core & Abs" to listOf(ExerciseType.PLANK, ExerciseType.CRUNCHES, ExerciseType.LEG_RAISES, ExerciseType.RUSSIAN_TWISTS),
+                        "Cardio & Agility" to listOf(ExerciseType.BURPEES, ExerciseType.MOUNTAIN_CLIMBERS, ExerciseType.JUMPING_JACKS, ExerciseType.HIGH_KNEES)
                     )
                     
                     categories.forEach { (category, types) ->

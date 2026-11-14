@@ -85,6 +85,10 @@ class HardAlarmManager(private val context: Context) {
                 "leg_raise", "leg_raises" -> "leg_raises"
                 "bicep_curl", "bicep_curls", "bicep_curl_left", "bicep_curl_right",
                 "bicep_curls_left", "bicep_curls_right", "bicep_left", "bicep_right", "biceps" -> "bicep_curls"
+                "burpee", "burpees" -> "burpees"
+                "mountain_climber", "mountain_climbers" -> "mountain_climbers"
+                "russian_twist", "russian_twists" -> "russian_twists"
+                "calf_raise", "calf_raises" -> "calf_raises"
                 "walking", "walk" -> "walking"
                 "running", "run" -> "running"
                 else -> clean

@@ -21,6 +21,10 @@ data class XpRates(
     val highKnee: Float = 0.03f,
     val legRaise: Float = 0.08f,
     val plank: Float = 0.005f, // Per second
+    val burpee: Float = 0.25f,
+    val mountainClimber: Float = 0.04f,
+    val russianTwist: Float = 0.05f,
+    val calfRaise: Float = 0.05f,
     val manualRep: Float = 0.075f,
     val manualDurationPerMin: Float = 0.15f,
     val multiplier: Float = 1.0f
@@ -48,6 +52,10 @@ class XpPreferences(context: Context) {
         private const val KEY_HIGH_KNEE = "xp_high_knee"
         private const val KEY_LEG_RAISE = "xp_leg_raise"
         private const val KEY_PLANK = "xp_plank"
+        private const val KEY_BURPEE = "xp_burpee"
+        private const val KEY_MOUNTAIN_CLIMBER = "xp_mountain_climber"
+        private const val KEY_RUSSIAN_TWIST = "xp_russian_twist"
+        private const val KEY_CALF_RAISE = "xp_calf_raise"
         private const val KEY_MANUAL_REP = "xp_manual_rep"
         private const val KEY_MANUAL_DURATION = "xp_manual_duration"
         private const val KEY_MULTIPLIER = "xp_multiplier"
@@ -69,6 +77,10 @@ class XpPreferences(context: Context) {
             highKnee = prefs.getFloat(KEY_HIGH_KNEE, DEFAULT_RATES.highKnee),
             legRaise = prefs.getFloat(KEY_LEG_RAISE, DEFAULT_RATES.legRaise),
             plank = prefs.getFloat(KEY_PLANK, DEFAULT_RATES.plank),
+            burpee = prefs.getFloat(KEY_BURPEE, DEFAULT_RATES.burpee),
+            mountainClimber = prefs.getFloat(KEY_MOUNTAIN_CLIMBER, DEFAULT_RATES.mountainClimber),
+            russianTwist = prefs.getFloat(KEY_RUSSIAN_TWIST, DEFAULT_RATES.russianTwist),
+            calfRaise = prefs.getFloat(KEY_CALF_RAISE, DEFAULT_RATES.calfRaise),
             manualRep = prefs.getFloat(KEY_MANUAL_REP, DEFAULT_RATES.manualRep),
             manualDurationPerMin = prefs.getFloat(KEY_MANUAL_DURATION, DEFAULT_RATES.manualDurationPerMin),
             multiplier = prefs.getFloat(KEY_MULTIPLIER, DEFAULT_RATES.multiplier)
@@ -91,6 +103,10 @@ class XpPreferences(context: Context) {
             .putFloat(KEY_HIGH_KNEE, newRates.highKnee)
             .putFloat(KEY_LEG_RAISE, newRates.legRaise)
             .putFloat(KEY_PLANK, newRates.plank)
+            .putFloat(KEY_BURPEE, newRates.burpee)
+            .putFloat(KEY_MOUNTAIN_CLIMBER, newRates.mountainClimber)
+            .putFloat(KEY_RUSSIAN_TWIST, newRates.russianTwist)
+            .putFloat(KEY_CALF_RAISE, newRates.calfRaise)
             .putFloat(KEY_MANUAL_REP, newRates.manualRep)
             .putFloat(KEY_MANUAL_DURATION, newRates.manualDurationPerMin)
             .putFloat(KEY_MULTIPLIER, newRates.multiplier)

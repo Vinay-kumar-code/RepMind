@@ -89,6 +89,10 @@ object LevelSystem {
     fun xpPerHighKnee(rates: XpRates? = null) = rates?.highKnee ?: 0.03f
     fun xpPerLegRaise(rates: XpRates? = null) = rates?.legRaise ?: 0.08f
     fun xpPerPlankSecond(rates: XpRates? = null) = rates?.plank ?: 0.005f // 200 seconds = 1 XP
+    fun xpPerBurpee(rates: XpRates? = null) = rates?.burpee ?: 0.25f // 4 burpees = 1 XP
+    fun xpPerMountainClimber(rates: XpRates? = null) = rates?.mountainClimber ?: 0.04f
+    fun xpPerRussianTwist(rates: XpRates? = null) = rates?.russianTwist ?: 0.05f
+    fun xpPerCalfRaise(rates: XpRates? = null) = rates?.calfRaise ?: 0.05f
 
     fun xpForStandardExercise(exercise: String, reps: Int, rates: XpRates? = null): Float {
         val xpPerRep = when (exercise.uppercase().replace(" ", "_")) {
@@ -106,6 +110,10 @@ object LevelSystem {
             "HIGH_KNEES", "HIGH_KNEE" -> xpPerHighKnee(rates)
             "LEG_RAISES", "LEG_RAISE" -> xpPerLegRaise(rates)
             "PLANK", "PLANKS" -> xpPerPlankSecond(rates)
+            "BURPEES", "BURPEE" -> xpPerBurpee(rates)
+            "MOUNTAIN_CLIMBERS", "MOUNTAIN_CLIMBER" -> xpPerMountainClimber(rates)
+            "RUSSIAN_TWISTS", "RUSSIAN_TWIST" -> xpPerRussianTwist(rates)
+            "CALF_RAISES", "CALF_RAISE" -> xpPerCalfRaise(rates)
             else -> rates?.manualRep ?: 0.1f // Default fallback
         }
         val mult = rates?.multiplier ?: 1.0f

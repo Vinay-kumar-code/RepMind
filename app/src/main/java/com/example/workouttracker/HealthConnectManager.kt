@@ -233,12 +233,17 @@ class HealthConnectManager(private val context: Context, private val repo: Sessi
                 val startOffset = istZone.rules.getOffset(startTime)
                 val endOffset = istZone.rules.getOffset(endTime)
                 
-                val hcExerciseType = when (session.exercise.lowercase()) {
+                val cleanEx = session.exercise.lowercase().trim().replace("-", "_").replace(" ", "_")
+                val hcExerciseType = when (cleanEx) {
                     "running" -> ExerciseSessionRecord.EXERCISE_TYPE_RUNNING
                     "walking" -> ExerciseSessionRecord.EXERCISE_TYPE_WALKING
                     "biking", "cycling" -> ExerciseSessionRecord.EXERCISE_TYPE_BIKING
                     "swimming" -> ExerciseSessionRecord.EXERCISE_TYPE_SWIMMING_POOL
-                    "pushups", "squats", "pullups", "lunges" -> ExerciseSessionRecord.EXERCISE_TYPE_CALISTHENICS
+                    "pushup", "pushups", "squat", "squats", "pullup", "pullups", "lunge", "lunges",
+                    "burpee", "burpees", "mountain_climber", "mountain_climbers",
+                    "russian_twist", "russian_twists", "calf_raise", "calf_raises",
+                    "jumping_jack", "jumping_jacks", "plank", "crunch", "crunches",
+                    "leg_raise", "leg_raises", "glute_bridge", "glute_bridges" -> ExerciseSessionRecord.EXERCISE_TYPE_CALISTHENICS
                     else -> ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING
                 }
 
