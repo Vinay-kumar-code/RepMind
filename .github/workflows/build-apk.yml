@@ -1,0 +1,88 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Test Android APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission to Gradlew
+        run: chmod +x gradlew
+
+      - name: Configure Environment
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          if [ -n "${{ secrets.MAPS_API_KEY }}" ]; then
+            echo "MAPS_API_KEY=${{ secrets.MAPS_API_KEY }}" >> local.properties
+          fi
+
+      - name: Run Unit Tests
+        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+
+      - name: Prepare APK Artifacts
+        run: |
+          mkdir -p apk_output
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          cp app/build/outputs/apk/debug/app-debug.apk apk_output/RepMind-debug-${SHORT_SHA}.apk
+          cp app/build/outputs/apk/debug/app-debug.apk apk_output/RepMind-latest.apk
+
+      - name: Upload Debug APK (With Commit SHA)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RepMind-debug-apk-${{ github.sha }}
+          path: apk_output/RepMind-debug-*.apk
+          retention-days: 30
+
+      - name: Upload Latest Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: RepMind-latest-debug-apk
+          path: apk_output/RepMind-latest.apk
+          retention-days: 30
+
+      - name: Create GitHub Release on Tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apk_output/RepMind-latest.apk
+          name: Release ${{ github.ref_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

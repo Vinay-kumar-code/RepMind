@@ -9,7 +9,7 @@ File localPropertiesFile = project.rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
     localProperties.load(localPropertiesFile.newDataInputStream())
 }
-def mapsApiKey = localProperties.getProperty('MAPS_API_KEY', '')
+def mapsApiKey = System.getenv('MAPS_API_KEY') ?: localProperties.getProperty('MAPS_API_KEY', '')
 
 android {
     namespace 'com.example.workouttracker'
