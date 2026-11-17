@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: 'Build Variant'
+        description: 'Build Variant (debug or release)'
         required: true
         default: 'debug'
         type: choice
@@ -22,18 +22,18 @@ on:
         default: false
         type: boolean
       release_tag:
-        description: 'Release Tag (e.g. v1.0.1 - used if Publish as GitHub Release is checked)'
+        description: 'Release Tag (optional, e.g. v1.0.2 - used if Publish Release is checked)'
         required: false
         default: ''
         type: string
 
 concurrency:
-  group: manual-build-${{ github.ref }}
+  group: manual-build-${{ github.ref }}-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
   manual-build:
-    name: Manual Build (${{ inputs.build_type }})
+    name: Build Android APK
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -63,7 +63,7 @@ jobs:
           fi
 
       - name: Run Unit Tests
-        if: ${{ inputs.run_tests }}
+        if: inputs.run_tests == true || inputs.run_tests == 'true'
         run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
@@ -82,12 +82,12 @@ jobs:
         run: |
           mkdir -p apk_output
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          BUILD_TYPE="${{ inputs.build_type }}"
           
-          # Locate built APK
-          if [ "${{ inputs.build_type }}" = "release" ]; then
-            FOUND_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ "$BUILD_TYPE" = "release" ]; then
+            FOUND_APK=$(find app/build/outputs/apk/release -type f -name "*.apk" | head -n 1)
           else
-            FOUND_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+            FOUND_APK=$(find app/build/outputs/apk/debug -type f -name "*.apk" | head -n 1)
           fi
           
           if [ -z "$FOUND_APK" ] || [ ! -f "$FOUND_APK" ]; then
@@ -96,23 +96,34 @@ jobs:
           fi
           
           echo "Found APK at: $FOUND_APK"
-          cp "$FOUND_APK" apk_output/RepMind-${{ inputs.build_type }}-${SHORT_SHA}.apk
-          cp "$FOUND_APK" apk_output/RepMind-${{ inputs.build_type }}.apk
+          cp "$FOUND_APK" "apk_output/RepMind-${BUILD_TYPE}-${SHORT_SHA}.apk"
+          cp "$FOUND_APK" "apk_output/RepMind-${BUILD_TYPE}.apk"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RepMind-${{ inputs.build_type }}-apk-${{ github.sha }}
+          name: RepMind-${{ inputs.build_type }}-apk
           path: apk_output/*.apk
           retention-days: 30
 
+      - name: Prepare Release Metadata
+        if: inputs.create_release == true || inputs.create_release == 'true'
+        id: release_meta
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="v1.0-manual-run${{ github.run_number }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "title=RepMind ${{ inputs.build_type }} ($TAG)" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
-        if: ${{ inputs.create_release }}
+        if: inputs.create_release == true || inputs.create_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: apk_output/RepMind-${{ inputs.build_type }}.apk
-          tag_name: ${{ inputs.release_tag != '' && inputs.release_tag || format('v1.0-manual-{0}', github.run_number) }}
-          name: ${{ inputs.release_tag != '' && format('Release {0}', inputs.release_tag) || format('RepMind {0} Build #{1}', inputs.build_type, github.run_number) }}
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.title }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
