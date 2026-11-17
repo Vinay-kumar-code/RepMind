@@ -1,15 +1,30 @@
-name: Build Android APK
+name: Auto Build APK (Incremental Updates)
 
 on:
   push:
     branches:
-      - '**'
+      - main
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle.properties'
+      - 'gradlew'
+      - 'gradlew.bat'
     tags:
       - 'v*'
   pull_request:
     branches:
-      - '**'
-  workflow_dispatch:
+      - main
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle.properties'
+      - 'gradlew'
+      - 'gradlew.bat'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

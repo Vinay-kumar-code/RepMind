@@ -1,0 +1,118 @@
+name: Manual Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Variant'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+      run_tests:
+        description: 'Run Unit Tests before building'
+        required: true
+        default: true
+        type: boolean
+      create_release:
+        description: 'Publish as a GitHub Release'
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: 'Release Tag (e.g. v1.0.1 - used if Publish as GitHub Release is checked)'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: manual-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  manual-build:
+    name: Manual Build (${{ inputs.build_type }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission to Gradlew
+        run: chmod +x gradlew
+
+      - name: Configure Environment
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          if [ -n "${{ secrets.MAPS_API_KEY }}" ]; then
+            echo "MAPS_API_KEY=${{ secrets.MAPS_API_KEY }}" >> local.properties
+          fi
+
+      - name: Run Unit Tests
+        if: ${{ inputs.run_tests }}
+        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+
+      - name: Build Android APK (${{ inputs.build_type }})
+        run: |
+          if [ "${{ inputs.build_type }}" = "release" ]; then
+            ./gradlew assembleRelease --stacktrace --no-daemon
+          else
+            ./gradlew assembleDebug --stacktrace --no-daemon
+          fi
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+
+      - name: Prepare APK Artifacts
+        run: |
+          mkdir -p apk_output
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          
+          # Locate built APK
+          if [ "${{ inputs.build_type }}" = "release" ]; then
+            FOUND_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          else
+            FOUND_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          fi
+          
+          if [ -z "$FOUND_APK" ] || [ ! -f "$FOUND_APK" ]; then
+            echo "Error: No APK found after build!"
+            exit 1
+          fi
+          
+          echo "Found APK at: $FOUND_APK"
+          cp "$FOUND_APK" apk_output/RepMind-${{ inputs.build_type }}-${SHORT_SHA}.apk
+          cp "$FOUND_APK" apk_output/RepMind-${{ inputs.build_type }}.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RepMind-${{ inputs.build_type }}-apk-${{ github.sha }}
+          path: apk_output/*.apk
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: ${{ inputs.create_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apk_output/RepMind-${{ inputs.build_type }}.apk
+          tag_name: ${{ inputs.release_tag != '' && inputs.release_tag || format('v1.0-manual-{0}', github.run_number) }}
+          name: ${{ inputs.release_tag != '' && format('Release {0}', inputs.release_tag) || format('RepMind {0} Build #{1}', inputs.build_type, github.run_number) }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
